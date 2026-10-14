@@ -22,6 +22,7 @@ PENDING: frozenset[str] = frozenset({"awaiting_elder", "awaiting_caretaker"})
 TOOL_TITLES = {
     "order_food": "Food order", "order_medicine": "Medicine order", "book_ride": "Ride",
     "set_reminder": "Reminder", "send_message_to_caretaker": "Message to family",
+    "notify_volunteer": "Help request", "call_contact": "Call",
 }
 
 
@@ -50,8 +51,16 @@ class Action(BaseModel):
         if self.quote is not None:
             return f"{title}: {', '.join(self.quote.lines)} from {self.quote.provider}, " \
                    f"{format_money(self.quote.amountMinor, self.quote.currency)}"
-        detail = self.args.get("title") or self.args.get("message") or ""
+        detail = self.args.get("title") or self.args.get("message") or self.args.get("name") or ""
         return f"{title}: {detail}" if detail else title
+
+
+def _booking_label(a: Action) -> str | None:
+    if not a.bookingUrl:
+        return None
+    if a.bookingUrl.startswith("tel:"):
+        return f"📞 Call {a.args.get('name', '')}".strip()
+    return f"Open {'Uber' if 'uber.com' in a.bookingUrl else 'Google Maps'} to book"
 
 
 class ActionCard(BaseModel):
@@ -75,14 +84,13 @@ class ActionCard(BaseModel):
     @classmethod
     def of(cls, a: Action) -> ActionCard:
         q = a.quote
-        lines = q.lines if q else [str(a.args.get("title") or a.args.get("message") or "")]
+        lines = q.lines if q else [str(a.args.get("title") or a.args.get("message") or a.args.get("label") or "")]
         return cls(
             id=a.id, tool=a.tool, title=TOOL_TITLES.get(a.tool, a.tool), status=a.status, lines=[x for x in lines if x],
             amount=format_money(q.amountMinor, q.currency) if q else None,
             provider=q.provider if q else None, eta=q.eta if q else None, orderId=a.orderId,
             deliverTo=a.deliverTo, bookingUrl=a.bookingUrl,
-            bookingLabel=(f"Open {'Uber' if 'uber.com' in a.bookingUrl else 'Google Maps'} to book"
-                          if a.bookingUrl else None),
+            bookingLabel=_booking_label(a),
             demo=bool(q and q.demo), estimate=bool(q and q.estimate),
         )
 

@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     # Tried in order when the primary is overloaded (503) or rate-limited (429).
     gemini_fallback_models: list[str] = ["gemini-3.5-flash-lite"]
     vertex_location: str = "global"
+    # SMS to volunteers. Unset → texts are only recorded in the activity log.
+    twilio_account_sid: str | None = None
+    twilio_auth_token: SecretStr | None = None
+    twilio_from_number: str | None = None
 
 
 @lru_cache

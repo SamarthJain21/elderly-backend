@@ -62,6 +62,9 @@ class FakeModel:
 
 
 class Store(dict[str, list[Message]]):
+    people: list[Any]
+    requests: dict[str, Any]
+    texts: list[tuple[str, str]]
     family: list[Any]
     actions: dict[str, Any]
     rules: Any
@@ -96,6 +99,10 @@ def store(monkeypatch: pytest.MonkeyPatch) -> Store:
     async def fake_geocode(q: str, tz: Any = None, near: Any = None) -> Place | None:
         return None if "nowhere" in q else Place(lat=18.53, lng=73.88, name=f"{q} (OSM)")
     monkeypatch.setattr(executor, "geocode", fake_geocode)
+    db.people, db.requests, db.texts = [], {}, []
+    monkeypatch.setattr(chat.contacts, "list_contacts", lambda _eid: list(db.people))
+    monkeypatch.setattr(chat.contacts, "save_request", lambda _eid, r: db.requests.__setitem__(r.id, r))
+    monkeypatch.setattr(executor, "send_sms", lambda to, body: db.texts.append((to, body)) or "log")
 
     def fake_auth(token: str) -> AuthedUser:
         if token != "elder-token":
@@ -606,3 +613,82 @@ def test_agent_tool_message_to_family_lands_in_family_thread(two_sockets: Store)
         app.dependency_overrides.clear()
     assert got["type"] == "family_message" and got["message"]["viaAgent"] is True
     assert got["message"]["text"] == "I'm fine, don't worry"
+
+
+
+from app.contacts import Contact  # noqa: E402
+
+
+def _approve_all(store: Store, tool: str) -> None:
+    d = store.rules.model_dump()
+    d["tools"][tool] = {"mode": "autonomous", "limitMinor": None}
+    store.rules = type(store.rules).model_validate(d)
+
+
+def test_volunteer_request_texts_best_trusted_volunteer(store: Store) -> None:
+    store.people = [
+        Contact(name="Anil", phone="+91111", kind="volunteer", skills=["plumbing"], trusted=False, rating=5),
+        Contact(name="Suresh", phone="+91222", kind="volunteer", skills=["plumbing"], trusted=True),
+    ]
+    _approve_all(store, "notify_volunteer")
+    m = FakeModel(tool_calls=[("notify_volunteer", {"skill": "plumbing", "title": "Fix leaking tap", "preferred_time": "today"})])
+    _with_model(m)
+    try:
+        with TestClient(app).websocket_connect("/ws/e1") as ws:
+            _connect(ws)
+            ws.send_json({"type": "message", "text": "my tap is leaking"})
+            _agent_reply(ws)
+    finally:
+        app.dependency_overrides.clear()
+    assert m.tool_results[0]["volunteer"] == "Suresh"
+    to, body = store.texts[0]
+    assert to == "+91222" and "Fix leaking tap" in body and "12 MG Road" in body
+    req = next(iter(store.requests.values()))
+    assert req.status == "notified" and req.volunteerName == "Suresh" and req.notifiedVia == ["log"]
+
+
+def test_volunteer_requests_wait_for_caretaker_by_default(store: Store) -> None:
+    store.people = [Contact(name="Suresh", phone="+91222", kind="volunteer", skills=["plumbing"], trusted=True)]
+    m = FakeModel(tool_calls=[("notify_volunteer", {"skill": "plumbing", "title": "Fix tap"})])
+    _with_model(m)
+    try:
+        with TestClient(app).websocket_connect("/ws/e1") as ws:
+            _connect(ws)
+            ws.send_json({"type": "message", "text": "tap leaking"})
+            _agent_reply(ws)
+    finally:
+        app.dependency_overrides.clear()
+    assert m.tool_results[0]["status"] == "sent_to_family_for_approval"
+    assert store.texts == []  # nobody texted until the family approves
+
+
+def test_no_matching_volunteer_tells_family(store: Store) -> None:
+    _approve_all(store, "notify_volunteer")
+    m = FakeModel(tool_calls=[("notify_volunteer", {"skill": "gardening", "title": "Trim hedge"})])
+    _with_model(m)
+    try:
+        with TestClient(app).websocket_connect("/ws/e1") as ws:
+            _connect(ws)
+            ws.send_json({"type": "message", "text": "garden is overgrown"})
+            _agent_reply(ws)
+    finally:
+        app.dependency_overrides.clear()
+    assert m.tool_results[0]["status"] == "no_volunteer_found"
+    assert "add a volunteer" in store.logs[-1].message and store.texts == []
+
+
+def test_call_my_son_gives_tap_to_call_card_even_with_strict_rules(store: Store) -> None:
+    store.people = [Contact(name="Ravi Kumar", phone="+91 98765 43210", kind="family", relationship="son")]
+    m = FakeModel(tool_calls=[("call_contact", {"who": "my son"})])
+    _with_model(m)
+    try:
+        with TestClient(app).websocket_connect("/ws/e1") as ws:
+            _connect(ws)
+            ws.send_json({"type": "message", "text": "call my son"})
+            card = _agent_reply(ws)["action"]
+    finally:
+        app.dependency_overrides.clear()
+    assert card["bookingUrl"] == "tel:+919876543210"
+    assert card["bookingLabel"] == "📞 Call Ravi Kumar" and card["status"] == "handed_off"
+    assert "Ravi Kumar (son)" in m.calls[0][0]  # agent knows who's who
+    assert "+91" not in m.calls[0][0]           # …but never sees phone numbers

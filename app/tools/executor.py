@@ -11,8 +11,10 @@ from dataclasses import dataclass, field
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app import checkin_store
+from app import checkin_store, contacts
 from app.autonomy import AutonomyRules, decide, format_money
+from app.contacts import Contact, HelpRequest, find_contact, pick_volunteer
+from app.sms import send_sms
 from app.checkin_store import LogEntry
 from app.agent import family, live
 from app.agent.family import FamilyMessage
@@ -61,6 +63,17 @@ ACTION_TOOLS: list[dict[str, Any]] = [
      "parameters": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}},
     {"name": "check_weather", "description": "Today's weather where they live (or a named city), with heat and rain advice.",
      "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}},
+    {"name": "notify_volunteer", "description": "Ask a trusted volunteer from their contacts to come and help: "
+     "repairs (plumbing, electrical), tech help, shopping, a walk, company. Use for anything at home that needs a person.",
+     "parameters": {"type": "object", "properties": {
+         "skill": {"type": "string", "description": "One or two words: plumbing, electrical, tech help, shopping, company…"},
+         "title": {"type": "string", "description": "Short task, e.g. 'Fix leaking kitchen tap'."},
+         "description": {"type": "string"}, "preferred_time": {"type": "string", "description": "e.g. 'today evening'."}},
+         "required": ["skill", "title"]}},
+    {"name": "call_contact", "description": "Show a button to phone someone from their contacts (family, friend, neighbour, doctor).",
+     "parameters": {"type": "object", "properties": {
+         "who": {"type": "string", "description": "Name or relationship, e.g. 'Ravi', 'my son', 'the doctor'."}},
+         "required": ["who"]}},
     {"name": "escalate_emergency", "description": "Use IMMEDIATELY for a fall, chest pain, trouble breathing, bleeding, "
      "fainting or any emergency. Alerts their family.",
      "parameters": {"type": "object", "properties": {"description": {"type": "string"}}, "required": ["description"]}},
@@ -80,6 +93,7 @@ class ToolContext:
     rules: AutonomyRules
     request_text: str
     actor_uid: str
+    people: list[Contact] = field(default_factory=list)
     # Filled in as tools run so the session can attach a card to the agent's reply.
     touched: list[Action] = field(default_factory=list)
 
@@ -130,6 +144,8 @@ async def perform(a: Action, elder: dict[str, Any]) -> dict[str, Any]:
             day = a.args.get("date") or _next_occurrence(a.args["time"], elder.get("timezone") or "Asia/Kolkata").isoformat()
             await asyncio.to_thread(save_reminder, a.elderId, a.args["title"], a.args["time"], dt.date.fromisoformat(day))
             result = {"status": "done", "reminder": f"{a.args['title']} at {a.args['time']} on {day}"}
+        elif a.tool == "notify_volunteer":
+            return await _ask_volunteer(a, elder)
         elif a.tool == "send_message_to_caretaker":
             msg = FamilyMessage(sender="elder", senderUid=a.elderId, senderName=elder.get("name", ""),
                                 text=a.args["message"], viaAgent=True)
@@ -150,6 +166,42 @@ async def perform(a: Action, elder: dict[str, Any]) -> dict[str, Any]:
     else:
         result["say"] = "Sorry, that didn't work. Your family can help."
     return result
+
+
+async def _ask_volunteer(a: Action, elder: dict[str, Any]) -> dict[str, Any]:
+    """Pick the best volunteer for the skill and text them. Creates a help request the family can follow."""
+    people = await asyncio.to_thread(contacts.list_contacts, a.elderId)
+    vol = pick_volunteer(people, a.args["skill"], bool(a.args.get("trustedOnly", True)))
+    req = HelpRequest(skill=a.args["skill"], title=a.args["title"], description=a.args.get("description", ""),
+                      preferredTime=a.args.get("preferred_time", ""))
+    name = elder.get("name", "Your neighbour")
+    if vol is None:
+        await asyncio.to_thread(contacts.save_request, a.elderId, req)
+        a.status = "failed"
+        await _save(a)
+        await asyncio.to_thread(checkin_store.add_log, a.elderId, LogEntry(
+            message=f"Help needed — {a.args['title']}: no {'trusted ' if a.args.get('trustedOnly', True) else ''}"
+                    f"volunteer with “{a.args['skill']}” skills. Please arrange help or add a volunteer in Contacts.",
+            kind="warn"))
+        return {"status": "no_volunteer_found", "say": "I couldn't find a volunteer for that, so I've asked your family to help.",
+                "instruction": "Say no volunteer was available, and that their family has been told and will sort it out."}
+    address = elder.get("address") or {}
+    where = ", ".join(x for x in (address.get("line1"), address.get("landmark"), address.get("city")) if x)
+    body = (f"Hi {vol.name}, this is Elderly for {name}. Could you help with: {a.args['title']}"
+            f"{' (' + req.preferredTime + ')' if req.preferredTime else ''}? {('Address: ' + where + '. ') if where else ''}"
+            f"Please call {name} on {elder.get('phone', '')} to confirm. Thank you!")
+    via = await asyncio.to_thread(send_sms, vol.phone, body)
+    req.volunteerId, req.volunteerName, req.status, req.notifiedVia = vol.id, vol.name, "notified", [via]
+    await asyncio.to_thread(contacts.save_request, a.elderId, req)
+    a.status = "done"
+    a.args = {**a.args, "label": f"{a.args['title']} — asked {vol.name}"}
+    await _save(a)
+    how = "by text" if via == "sms" else "(text not sent — SMS not set up; shown here only)"
+    await asyncio.to_thread(checkin_store.add_log, a.elderId, LogEntry(
+        message=f"Asked {vol.name}{' ⭐' if vol.trusted else ''} to help with “{a.args['title']}” {how}.", kind="ok"))
+    return {"status": "done", "volunteer": vol.name, "trusted": vol.trusted,
+            "say": f"I've asked {vol.name} to help. They'll call you.",
+            "instruction": f"Tell them you've asked {vol.name} to help and they should get a call soon."}
 
 
 # ---------- the tools ----------
@@ -234,6 +286,27 @@ async def run_tool(ctx: ToolContext, name: str, args: dict[str, Any]) -> dict[st
         return await _gated(ctx, name, clean, None)
     if name == "send_message_to_caretaker":
         return await _gated(ctx, name, {"message": str(args.get("message", ""))[:500]}, None)
+    if name == "notify_volunteer":
+        skill = str(args.get("skill", "")).strip()[:40]
+        title = str(args.get("title", "")).strip()[:120]
+        if not skill or not title:
+            return {"status": "need_more_info", "instruction": "Ask what they need help with."}
+        return await _gated(ctx, name, {"skill": skill, "title": title, "description": str(args.get("description", ""))[:300],
+                                        "preferred_time": str(args.get("preferred_time", ""))[:60],
+                                        "trustedOnly": ctx.rules.trustedVolunteersOnly}, None)
+    if name == "call_contact":
+        person = find_contact(ctx.people, str(args.get("who", "")))
+        if person is None:
+            names = ", ".join(f"{p.name} ({p.relationship or p.kind})" for p in ctx.people[:8]) or "nobody yet"
+            return {"status": "not_found", "contacts": names,
+                    "instruction": "Say you couldn't find them and ask who they mean, using these names."}
+        a = Action(elderId=ctx.elder_id, tool=name, args={"who": args.get("who"), "name": person.name,
+                   "label": f"{person.name}{' · ' + person.relationship if person.relationship else ''}"},
+                   status="handed_off", bookingUrl=f"tel:{person.phone.replace(' ', '')}", requestText=ctx.request_text)
+        ctx.touched.append(a)
+        await _save(a)
+        return {"status": "ready_to_call", "name": person.name, "say": f"Tap the button to call {person.name}.",
+                "instruction": f"Tell them to tap the green button to call {person.name}."}
     if name == "check_weather":
         city = str(args.get("city") or ctx.elder.get("city") or "").strip()
         if not city:

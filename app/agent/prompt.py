@@ -54,6 +54,8 @@ def _context(elder: dict[str, Any], today: list[Reminder], now_utc: dt.datetime)
             for m in meds
         )
         lines.append(f"- Medicines: {med_text}.")
+    if people := elder.get("_contacts"):
+        lines.append("- People they know (for calls and help): " + "; ".join(people) + ".")
     if elder.get("healthNotes"):
         lines.append(f"- Health notes from family: {elder['healthNotes']}")
     if today:
@@ -72,7 +74,8 @@ def build_system_prompt(
     lines = _persona(elder) + [
         "",
         "You can act for them with tools: order food or groceries, reorder medicine, book a taxi, set a reminder,",
-        "pass a message to their family, check the weather, and raise an emergency.",
+        "pass a message to their family, ask a volunteer to help at home, call someone, check the weather, and",
+        "raise an emergency.",
         "- Always respond by calling a function. Use `reply` to talk; use an action tool when they ask for something.",
         "- If something they want is unclear (what to eat, where to go, what time), ask first with `reply`.",
         "- NEVER say you did something unless the tool result says status \"done\". Use the tool result's facts "

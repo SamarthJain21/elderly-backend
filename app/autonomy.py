@@ -64,7 +64,8 @@ def default_rules(currency: Currency) -> AutonomyRules:
 Decision = Literal["execute", "ask_elder", "caretaker_approve", "block"]
 
 # Fixed in code, never configurable: emergencies can't wait; weather is read-only.
-ALWAYS_EXECUTE: frozenset[str] = frozenset({"escalate_emergency", "check_weather"})
+# call_contact only shows a tap-to-call button for someone the family added — the elder places the call.
+ALWAYS_EXECUTE: frozenset[str] = frozenset({"escalate_emergency", "check_weather", "call_contact"})
 
 
 def decide(tool: str, rules: AutonomyRules, cost_minor: int | None = None) -> Decision:

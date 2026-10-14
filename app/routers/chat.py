@@ -30,7 +30,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, ValidationError
 
-from app import checkin_store
+from app import checkin_store, contacts
 from app.access import load_elder
 from app.agent import family, live, messages
 from app.agent.family import FALLBACK_REPLIES, PRESET_REPLIES, FamilyMessage
@@ -148,9 +148,14 @@ class Session:
     async def chat_turn(self, text: str) -> None:
         elder, now = await self._elder(), dt.datetime.now(dt.UTC)
         rules = await asyncio.to_thread(load_rules, self.elder_id, elder)
+        people = await asyncio.to_thread(contacts.list_contacts, self.elder_id)
+        # Names + relationships only (no phone numbers) so the model can pick who to call or ask.
+        elder = {**elder, "_contacts": [f"{p.name} ({p.relationship or p.kind}{', volunteer: ' + ', '.join(p.skills) if p.kind == 'volunteer' else ''})"
+                                        for p in people]}
         pending = await self._pending_for_elder()
         prompt = build_system_prompt(elder, await self._today_reminders(elder, now), now, pending.summary() if pending else None)
-        ctx = ToolContext(elder_id=self.elder_id, elder=elder, rules=rules, request_text=text, actor_uid=self.user.uid)
+        ctx = ToolContext(elder_id=self.elder_id, elder=elder, rules=rules, request_text=text, actor_uid=self.user.uid,
+                          people=people)
 
         async def execute(name: str, args: dict[str, Any]) -> dict[str, Any]:
             if name == "answer_pending_confirmation" and pending is not None:

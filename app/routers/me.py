@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
-from google.cloud.firestore import SERVER_TIMESTAMP
+from google.cloud.firestore import SERVER_TIMESTAMP, ArrayUnion
 from pydantic import BaseModel
 
 from app import firebase
@@ -43,11 +43,18 @@ def onboard_caretaker(body: CaretakerSignup, user: CurrentUser) -> Me:
         "email": user.email,
         "createdAt": SERVER_TIMESTAMP,
     })
+    # Pending invites from other caretakers (keyed by lowercase email) attach on first sign-in.
+    invite_ref = db.collection("invites").document((user.email or "").lower())
+    invited: list[str] = (invite_ref.get().to_dict() or {}).get("elderIds", []) if user.email else []
     batch.set(db.collection("caretakers").document(user.uid), {
         "uid": user.uid,
         "name": body.name,
         "email": user.email,
-        "elderIds": [],
+        "elderIds": invited,
     })
+    for elder_id in invited:
+        batch.update(db.collection("elders").document(elder_id), {"caretakerIds": ArrayUnion([user.uid])})
+    if invited:
+        batch.delete(invite_ref)
     batch.commit()
     return Me(uid=user.uid, email=user.email, role="caretaker")
