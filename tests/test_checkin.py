@@ -72,7 +72,8 @@ def test_merge_never_overwrites_with_null_and_dedupes_concerns() -> None:
         ({"mood": "low", "sleepQuality": "well", "meals": "rice", "medicationTaken": True}, "warn", False),
         ({"mood": "good", "sleepQuality": "well", "meals": "rice", "medicationTaken": False}, "warn", False),
         ({"mood": "bad", "sleepQuality": "well", "meals": "rice", "medicationTaken": True}, "alert", True),
-        ({"mood": "good", "anomalies": ["felt dizzy"]}, "alert", True),
+        ({"mood": "good", "anomalies": ["knee pain"]}, "warn", False),
+        ({"mood": "good", "anomalies": ["felt dizzy"], "urgent": ["felt dizzy"]}, "alert", True),
     ],
 )
 def test_triage_is_deterministic(fields: dict[str, object], kind: str, escalate: bool) -> None:
@@ -83,3 +84,9 @@ def test_triage_is_deterministic(fields: dict[str, object], kind: str, escalate:
 
 def test_summary_marks_incomplete_checkins() -> None:
     assert assess(ci(mood="okay"))[2].endswith("(incomplete)")
+
+
+def test_urgent_concerns_are_also_recorded_as_anomalies() -> None:
+    c = merge(ci(), Extracted(concerns=["knee pain"], urgent=["fell in bathroom"]))
+    assert c.anomalies == ["knee pain", "fell in bathroom"]
+    assert c.urgent == ["fell in bathroom"]

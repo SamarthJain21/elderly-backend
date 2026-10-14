@@ -89,7 +89,9 @@ _EXTRACT_RULES = """Extraction rules — fill `extracted` ONLY from the elder's 
 - sleepQuality: well | okay | poorly. sleepHours only if they give a number.
 - meals: a short phrase of what they ate, e.g. "tea and toast". "Not yet" is a valid answer → "nothing yet".
 - medicationTaken: true / false only if they clearly say so.
-- concerns: health or safety worries they mention (pain, dizziness, fall, very lonely, not eating). Empty if none."""
+- concerns: health or safety worries they mention (pain, dizziness, fall, very lonely, not eating). Empty if none.
+- urgent: only the concerns that need family now (fall, chest pain, breathing trouble, bleeding, fainting or
+  dizziness, confusion, not eating all day, self-harm). Minor aches and pains are NOT urgent."""
 
 
 def build_checkin_prompt(elder: dict[str, Any], c: CheckIn, today: list[Reminder], now_utc: dt.datetime) -> str:

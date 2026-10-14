@@ -33,6 +33,7 @@ class CheckIn(BaseModel):
     meals: str | None = None
     medicationTaken: bool | None = None
     anomalies: list[str] = Field(default_factory=list)
+    urgent: list[str] = Field(default_factory=list)  # subset of anomalies that need the family now
     escalateFlag: bool = False
     turns: int = 0
     needsMedication: bool = True
@@ -49,6 +50,15 @@ class Extracted(BaseModel):
     meals: str | None = None
     medicationTaken: bool | None = None
     concerns: list[str] = Field(default_factory=list)
+    urgent: list[str] = Field(
+        default_factory=list,
+        description="Only concerns that are urgent: a fall, chest pain, trouble breathing, bleeding, fainting or "
+        "dizziness, confusion, not eating all day, or thoughts of self-harm. Minor aches are NOT urgent.",
+    )
+
+
+def _add_unique(existing: list[str], new: list[str]) -> list[str]:
+    return existing + [s for s in (s.strip() for s in new) if s and s not in existing]
 
 
 def checkin_id(elder_id: str, day: dt.date) -> str:
@@ -92,15 +102,15 @@ def next_missing(c: CheckIn) -> Field_ | None:
 
 def merge(c: CheckIn, x: Extracted) -> CheckIn:
     """Fill only fields the model actually extracted; never overwrite with None."""
-    updates = {k: v for k, v in x.model_dump(exclude={"concerns"}).items() if v is not None}
-    anomalies = c.anomalies + [s for s in (s.strip() for s in x.concerns) if s and s not in c.anomalies]
-    return c.model_copy(update={**updates, "anomalies": anomalies})
+    updates = {k: v for k, v in x.model_dump(exclude={"concerns", "urgent"}).items() if v is not None}
+    anomalies = _add_unique(_add_unique(c.anomalies, x.concerns), x.urgent)  # urgent ones are concerns too
+    return c.model_copy(update={**updates, "anomalies": anomalies, "urgent": _add_unique(c.urgent, x.urgent)})
 
 
 def assess(c: CheckIn) -> tuple[LogKind, bool, str]:
     """Deterministic triage — the model reports facts, code decides how worried to be."""
-    alert = c.mood == "bad" or bool(c.anomalies)
-    warn = c.mood == "low" or c.medicationTaken is False or c.sleepQuality == "poorly"
+    alert = c.mood == "bad" or bool(c.urgent)
+    warn = c.mood == "low" or c.medicationTaken is False or c.sleepQuality == "poorly" or bool(c.anomalies)
     kind: LogKind = "alert" if alert else "warn" if warn else "ok"
 
     parts = []
