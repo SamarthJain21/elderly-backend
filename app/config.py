@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     # Local dev only. On Cloud Run, leave unset and use the service's identity (ADC).
     firebase_credentials: Path | None = Path("service-account.json")
     cors_origins: list[str] = ["http://localhost:5173"]
-    elder_email_domain: str = "hearth.app"
+    elder_email_domain: str = "elderly.app"
 
 
 @lru_cache

@@ -14,7 +14,7 @@ from app.routers.elders import _PASSWORD_ALPHABET, generate_temp_password
 TOKENS: dict[str, tuple[dict[str, Any], dict[str, Any] | None]] = {
     "caretaker": ({"uid": "c1", "email": "c@x.com", "firebase": {"sign_in_provider": "google.com"}},
                   {"role": "caretaker"}),
-    "elder": ({"uid": "e1", "email": "e@hearth.app", "firebase": {"sign_in_provider": "password"}},
+    "elder": ({"uid": "e1", "email": "e@elderly.app", "firebase": {"sign_in_provider": "password"}},
               {"role": "elder"}),
     "fake-caretaker": ({"uid": "c2", "firebase": {"sign_in_provider": "password"}},
                        {"role": "caretaker"}),
@@ -52,7 +52,7 @@ def test_me_with_invalid_token_is_401(client: TestClient) -> None:
 def test_me_returns_role_for_onboarded_user(client: TestClient) -> None:
     r = client.get("/me", headers=h("elder"))
     assert r.status_code == 200
-    assert r.json() == {"uid": "e1", "email": "e@hearth.app", "role": "elder"}
+    assert r.json() == {"uid": "e1", "email": "e@elderly.app", "role": "elder"}
 
 
 def test_me_is_404_before_onboarding(client: TestClient) -> None:
