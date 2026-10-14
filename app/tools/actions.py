@@ -13,7 +13,10 @@ from app import firebase
 from app.autonomy import format_money
 from app.tools.providers import Quote
 
-ActionStatus = Literal["awaiting_elder", "awaiting_caretaker", "done", "declined", "cancelled", "blocked", "failed"]
+# handed_off = we prepared it (e.g. a prefilled Uber link) and a person finishes it in the provider's app.
+ActionStatus = Literal[
+    "awaiting_elder", "awaiting_caretaker", "done", "handed_off", "declined", "cancelled", "blocked", "failed",
+]
 PENDING: frozenset[str] = frozenset({"awaiting_elder", "awaiting_caretaker"})
 
 TOOL_TITLES = {
@@ -34,6 +37,8 @@ class Action(BaseModel):
     status: ActionStatus
     quote: Quote | None = None
     orderId: str | None = None
+    deliverTo: str | None = None   # home address for deliveries
+    bookingUrl: str | None = None  # where a person finishes the booking (rides)
     requestText: str = ""         # what the elder said that led to this
     messageId: str | None = None  # chat message showing this action's card
     decidedBy: str | None = None  # uid of whoever approved/declined
@@ -61,6 +66,11 @@ class ActionCard(BaseModel):
     provider: str | None
     eta: str | None
     orderId: str | None
+    deliverTo: str | None = None
+    bookingUrl: str | None = None
+    bookingLabel: str | None = None
+    demo: bool = False       # simulated order: nothing really placed
+    estimate: bool = False   # amount is an estimate (ride apps set the real fare)
 
     @classmethod
     def of(cls, a: Action) -> ActionCard:
@@ -70,6 +80,10 @@ class ActionCard(BaseModel):
             id=a.id, tool=a.tool, title=TOOL_TITLES.get(a.tool, a.tool), status=a.status, lines=[x for x in lines if x],
             amount=format_money(q.amountMinor, q.currency) if q else None,
             provider=q.provider if q else None, eta=q.eta if q else None, orderId=a.orderId,
+            deliverTo=a.deliverTo, bookingUrl=a.bookingUrl,
+            bookingLabel=(f"Open {'Uber' if 'uber.com' in a.bookingUrl else 'Google Maps'} to book"
+                          if a.bookingUrl else None),
+            demo=bool(q and q.demo), estimate=bool(q and q.estimate),
         )
 
 

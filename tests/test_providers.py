@@ -22,8 +22,11 @@ def test_quantities_are_capped() -> None:
     assert quote_medicine("Amlodipine", 50, "INR").lines == ["6 × Amlodipine"]
 
 
-def test_same_ride_same_price() -> None:
-    assert quote_ride("City Hospital", "INR").amountMinor == quote_ride("city hospital", "INR").amountMinor
+def test_ride_fare_grows_with_distance_and_is_an_estimate() -> None:
+    near, far = quote_ride("Clinic", 2, "INR"), quote_ride("Airport", 20, "INR")
+    assert near.amountMinor < far.amountMinor
+    assert near.estimate and not near.demo
+    assert quote_ride("x", None, "INR").amountMinor == quote_ride("X", None, "INR").amountMinor  # deterministic
 
 
 from app.tools.weather import advice_for  # noqa: E402

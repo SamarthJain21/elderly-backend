@@ -16,6 +16,7 @@ from app.autonomy import AutonomyRules, decide, format_money
 from app.checkin_store import LogEntry
 from app.tools import actions, providers
 from app.tools.actions import Action
+from app.tools.geo import geocode, km_between, maps_link, uber_link
 from app.tools.weather import get_weather
 
 # Emergency numbers by country (via timezone). Shown to the elder, never dialled automatically.
@@ -107,11 +108,21 @@ def _next_occurrence(time_hhmm: str, tz: str) -> dt.date:
 async def perform(a: Action, elder: dict[str, Any]) -> dict[str, Any]:
     """Carry out an approved action. Marks it done (or failed) and returns facts for the model."""
     try:
+        if a.tool == "book_ride" and a.bookingUrl:
+            # Real handoff: a prefilled ride-app link. The elder (or family) taps it to finish booking.
+            a.status = "handed_off"
+            await _save(a)
+            await asyncio.to_thread(checkin_store.add_log, a.elderId, LogEntry(
+                message=f"Ride ready to book — {a.summary()} (estimate). Link sent to {elder.get('name', 'them')}.", kind="ok"))
+            return {"status": "ready_to_book", "estimatedFare": format_money(a.quote.amountMinor, a.quote.currency) if a.quote else None,
+                    "instruction": "Tell them to tap the button on the card to open the app and confirm the ride there. "
+                                   "The fare shown is an estimate.",
+                    "say": "Tap the button on the card to finish booking your ride."}
         if a.quote is not None:
             a.orderId = providers.place(a.quote)
             result = {"status": "done", "orderId": a.orderId, "provider": a.quote.provider,
                       "total": format_money(a.quote.amountMinor, a.quote.currency), "eta": a.quote.eta,
-                      "paidFrom": "family wallet"}
+                      "deliverTo": a.deliverTo, "demo": a.quote.demo}
         elif a.tool == "set_reminder":
             from app.routers.reminders import save_reminder  # avoid import cycle at module load
             day = a.args.get("date") or _next_occurrence(a.args["time"], elder.get("timezone") or "Asia/Kolkata").isoformat()
@@ -129,7 +140,8 @@ async def perform(a: Action, elder: dict[str, Any]) -> dict[str, Any]:
         result = {"status": "failed", "error": str(exc)[:200]}
     await _save(a)
     if a.status == "done":
-        await asyncio.to_thread(checkin_store.add_log, a.elderId, LogEntry(message=f"Done — {a.summary()}", kind="ok"))
+        demo = " (demo — not really ordered)" if a.quote and a.quote.demo else ""
+        await asyncio.to_thread(checkin_store.add_log, a.elderId, LogEntry(message=f"Done — {a.summary()}{demo}", kind="ok"))
         result["say"] = f"Done — {a.summary()}."
     else:
         result["say"] = "Sorry, that didn't work. Your family can help."
@@ -138,9 +150,10 @@ async def perform(a: Action, elder: dict[str, Any]) -> dict[str, Any]:
 
 # ---------- the tools ----------
 
-async def _gated(ctx: ToolContext, tool: str, args: dict[str, Any], quote: providers.Quote | None) -> dict[str, Any]:
+async def _gated(ctx: ToolContext, tool: str, args: dict[str, Any], quote: providers.Quote | None,
+                 **extra: Any) -> dict[str, Any]:
     decision = decide(tool, ctx.rules, quote.amountMinor if quote else None)
-    a = Action(elderId=ctx.elder_id, tool=tool, args=args, status="done", quote=quote, requestText=ctx.request_text)
+    a = Action(elderId=ctx.elder_id, tool=tool, args=args, status="done", quote=quote, requestText=ctx.request_text, **extra)
     ctx.touched.append(a)
     over_limit = quote is not None and decision == "caretaker_approve" and ctx.rules.tools[tool].mode != "caretaker_approve"  # type: ignore[index]
 
@@ -167,18 +180,46 @@ async def _gated(ctx: ToolContext, tool: str, args: dict[str, Any], quote: provi
 
 async def run_tool(ctx: ToolContext, name: str, args: dict[str, Any]) -> dict[str, Any]:
     currency = ctx.rules.currency
+    address = ctx.elder.get("address") or {}
+    located = address.get("lat") is not None and address.get("lng") is not None
+    home = (address["lat"], address["lng"]) if located else None
+    # A city-level match is fine for "which hospital is near" but not as a pickup point.
+    pickup = home if located and address.get("precision") in ("address", "street") else None
+    deliver_to = ", ".join(x for x in (address.get("line1"), address.get("line2"), address.get("landmark"),
+                                       address.get("city"), address.get("postcode")) if x) or None
+    if name in ("order_food", "order_medicine") and deliver_to is None:
+        await _log(ctx, f"{ctx.name} wanted to order ({name.replace('_', ' ')}) but there's no delivery address. "
+                        "Add it in their Profile.", "warn")
+        return {"status": "no_delivery_address", "say": "Your family needs to add your address first. I've told them.",
+                "instruction": "Say you can't order yet because their family needs to add their home address; "
+                               "you've let them know."}
     if name == "order_food":
         items = [str(i) for i in args.get("items") or [] if str(i).strip()][:10]
         if not items:
             return {"status": "need_more_info", "instruction": "Ask what they'd like to eat."}
-        return await _gated(ctx, name, {"items": items, "notes": args.get("notes", "")}, providers.quote_food(items, currency))
+        return await _gated(ctx, name, {"items": items, "notes": args.get("notes", "")},
+                            providers.quote_food(items, currency), deliverTo=deliver_to)
     if name == "order_medicine":
         med = str(args.get("medicine", "")).strip()
         qty = int(args.get("quantity") or 1)
-        return await _gated(ctx, name, {"medicine": med, "quantity": qty}, providers.quote_medicine(med, qty, currency))
+        return await _gated(ctx, name, {"medicine": med, "quantity": qty},
+                            providers.quote_medicine(med, qty, currency), deliverTo=deliver_to)
     if name == "book_ride":
         dest = str(args.get("destination", "")).strip()
-        return await _gated(ctx, name, {"destination": dest, "when": args.get("when", "now")}, providers.quote_ride(dest, currency))
+        try:
+            place = await geocode(f"{dest}, {address.get('city', '')}".strip(", "), ctx.tz, home)
+        except Exception:  # noqa: BLE001
+            place = None
+        if place is None:
+            return {"status": "place_not_found",
+                    "instruction": f"Say you couldn't find '{dest}'. Ask for the full name or address of the place."}
+        km = km_between(home, (place.lat, place.lng)) if home else None
+        if currency == "INR":
+            url = uber_link(pickup, "Home", place, dest)  # pickup None → Uber uses their current location
+        else:
+            url = maps_link(pickup, place)
+        return await _gated(ctx, name, {"destination": dest, "when": args.get("when", "now")},
+                            providers.quote_ride(dest, km, currency), bookingUrl=url)
     if name == "set_reminder":
         time_s = str(args.get("time", ""))
         if len(time_s) != 5 or time_s[2] != ":":

@@ -36,6 +36,8 @@ class Quote(BaseModel):
     amountMinor: int
     currency: Currency
     eta: str
+    estimate: bool = False    # fare estimate (rides) — the app sets the real price
+    demo: bool = True         # simulated provider: nothing is really ordered
 
 
 def _convert(inr_minor: int, currency: Currency) -> int:
@@ -76,12 +78,21 @@ def quote_medicine(medicine: str, quantity: int, currency: Currency) -> Quote:
                  amountMinor=_convert(quantity * _MEDICINE_INR, currency), currency=currency, eta="about 20 min")
 
 
-def quote_ride(destination: str, currency: Currency) -> Quote:
-    # Deterministic "distance" from the destination name, so the same trip always costs the same.
-    h = int(hashlib.sha256(destination.lower().encode()).hexdigest(), 16)
-    fare_inr = 12_000 + h % 28_000
-    return Quote(provider=RIDES[currency], lines=[f"Ride to {destination}"],
-                 amountMinor=_convert(fare_inr, currency), currency=currency, eta=f"driver in {4 + h % 8} min")
+# Rough taxi fare: base + per km (minor units), road distance ≈ 1.3 × straight line.
+_FARE: dict[Currency, tuple[int, int]] = {"INR": (5_000, 1_800), "THB": (3_500, 800), "SGD": (400, 80)}
+
+
+def quote_ride(destination: str, km: float | None, currency: Currency) -> Quote:
+    """Estimate only — the real fare is set by the ride app when the booking is finished there."""
+    if km is None:
+        h = int(hashlib.sha256(destination.lower().encode()).hexdigest(), 16)
+        km = 3 + (h % 120) / 10  # unknown distance: deterministic 3–15 km
+    road_km = km * 1.3
+    base, per_km = _FARE[currency]
+    fare = base + round(per_km * road_km)
+    return Quote(provider=RIDES[currency], lines=[f"Ride to {destination} (~{road_km:.0f} km)"],
+                 amountMinor=round(fare / 100) * 100, currency=currency, eta=f"~{max(5, round(road_km * 3))} min drive",
+                 estimate=True, demo=False)
 
 
 def place(quote: Quote) -> str:

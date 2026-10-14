@@ -18,11 +18,15 @@ from app.autonomy import default_rules
 from app.checkin import CheckIn, Extracted
 from app.checkin_store import LogEntry
 from app.schedule import Reminder
+from app.tools import executor
+from app.tools.geo import Place
 
 ELDER = AuthedUser(uid="e1", email=None, provider="password", role="elder")
 ELDER_DOC = {
     "name": "Rose Devi", "language": "hi-IN", "timezone": "Asia/Kolkata", "caretakerIds": ["c1"],
     "medicationSchedule": [{"name": "Amlodipine", "dose": "5mg", "times": ["08:00"], "withFood": False}],
+    "address": {"line1": "12 MG Road", "line2": "Flat 3", "landmark": "", "city": "Pune", "postcode": "411001",
+                "lat": 18.52, "lng": 73.85, "precision": "street"},
 }
 
 
@@ -83,6 +87,10 @@ def store(monkeypatch: pytest.MonkeyPatch) -> Store:
     monkeypatch.setattr(chat.actions, "get", lambda _eid, aid: db.actions[aid].model_copy(deep=True) if aid in db.actions else None)
     monkeypatch.setattr(chat.actions, "with_status", lambda _eid, st: [a for a in db.actions.values() if a.status == st])
     monkeypatch.setattr(chat.messages, "set_action_card", lambda _eid, mid, card: None)
+
+    async def fake_geocode(q: str, tz: Any = None, near: Any = None) -> Place | None:
+        return None if "nowhere" in q else Place(lat=18.53, lng=73.88, name=f"{q} (OSM)")
+    monkeypatch.setattr(executor, "geocode", fake_geocode)
 
     def fake_auth(token: str) -> AuthedUser:
         if token != "elder-token":
@@ -438,3 +446,82 @@ def test_emergency_always_alerts_even_if_everything_blocked(store: Store) -> Non
         app.dependency_overrides.clear()
     assert m.tool_results[0]["status"] == "family_alerted" and m.tool_results[0]["emergencyNumber"] == "112"
     assert store.logs[-1].kind == "alert" and "fell in the bathroom" in store.logs[-1].message
+
+
+
+def test_ride_is_handed_off_with_a_prefilled_uber_link(store: Store) -> None:
+    d = store.rules.model_dump()
+    d["tools"]["book_ride"] = {"mode": "autonomous", "limitMinor": 100_000}
+    store.rules = type(store.rules).model_validate(d)
+    m = FakeModel(tool_calls=[("book_ride", {"destination": "Ruby Hall Clinic"})])
+    _with_model(m)
+    try:
+        with TestClient(app).websocket_connect("/ws/e1") as ws:
+            _connect(ws)
+            ws.send_json({"type": "message", "text": "take me to Ruby Hall Clinic"})
+            card = _agent_reply(ws)["action"]
+    finally:
+        app.dependency_overrides.clear()
+    assert m.tool_results[0]["status"] == "ready_to_book"
+    assert card["status"] == "handed_off" and card["estimate"] and not card["demo"]
+    assert card["bookingUrl"].startswith("https://m.uber.com/ul/?action=setPickup")
+    assert "pickup%5Blatitude%5D=18.520000" in card["bookingUrl"]
+    assert card["bookingLabel"] == "Open Uber to book"
+
+
+def test_unknown_place_asks_instead_of_booking(store: Store) -> None:
+    m = FakeModel(tool_calls=[("book_ride", {"destination": "nowhere land"})])
+    _with_model(m)
+    try:
+        with TestClient(app).websocket_connect("/ws/e1") as ws:
+            _connect(ws)
+            ws.send_json({"type": "message", "text": "take me to nowhere land"})
+            assert _agent_reply(ws)["action"] is None
+    finally:
+        app.dependency_overrides.clear()
+    assert m.tool_results[0]["status"] == "place_not_found"
+    assert store.actions == {}
+
+
+def test_delivery_without_address_tells_family_and_creates_nothing(store: Store, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(ELDER_DOC, "address", None)
+    m = FakeModel(tool_calls=[("order_food", {"items": ["dal"]})])
+    _with_model(m)
+    try:
+        with TestClient(app).websocket_connect("/ws/e1") as ws:
+            _connect(ws)
+            ws.send_json({"type": "message", "text": "order dal"})
+            _agent_reply(ws)
+    finally:
+        app.dependency_overrides.clear()
+    assert m.tool_results[0]["status"] == "no_delivery_address"
+    assert store.actions == {} and "no delivery address" in store.logs[-1].message
+
+
+def test_food_card_is_labelled_demo_and_shows_delivery_address(store: Store) -> None:
+    _with_model(FakeModel(tool_calls=[("order_food", {"items": ["dal"]})]))
+    try:
+        with TestClient(app).websocket_connect("/ws/e1") as ws:
+            _connect(ws)
+            ws.send_json({"type": "message", "text": "order dal"})
+            card = _agent_reply(ws)["action"]
+    finally:
+        app.dependency_overrides.clear()
+    assert card["demo"] is True
+    assert card["deliverTo"] == "12 MG Road, Flat 3, Pune, 411001"
+
+
+def test_city_level_address_is_not_used_as_pickup(store: Store, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(ELDER_DOC, "address", {**ELDER_DOC["address"], "precision": "city"})
+    d = store.rules.model_dump()
+    d["tools"]["book_ride"] = {"mode": "autonomous", "limitMinor": 100_000}
+    store.rules = type(store.rules).model_validate(d)
+    _with_model(FakeModel(tool_calls=[("book_ride", {"destination": "Clinic"})]))
+    try:
+        with TestClient(app).websocket_connect("/ws/e1") as ws:
+            _connect(ws)
+            ws.send_json({"type": "message", "text": "taxi to the clinic"})
+            url = _agent_reply(ws)["action"]["bookingUrl"]
+    finally:
+        app.dependency_overrides.clear()
+    assert "pickup=my_location" in url and "pickup%5Blatitude%5D" not in url
