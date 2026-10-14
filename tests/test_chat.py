@@ -152,5 +152,53 @@ def test_prompt_uses_language_local_time_meds_and_reminders() -> None:
     assert "Hindi" in p
     assert "Thursday 15 October 2026, 01:30" in p  # 20:00 UTC = 01:30 IST next day
     assert "Amlodipine 5mg at 08:00, 20:00 with food" in p
-    assert "10:00 Doctor visit" in p
+    assert "10:00 Doctor visit (later today)" in p  # 01:30 now, so 10:00 is still ahead
     assert "Call them Rose" in p
+
+
+class _FakeModels:
+    def __init__(self, outcomes: dict[str, Exception | str]) -> None:
+        self.outcomes = outcomes
+        self.tried: list[str] = []
+
+    async def generate_content(self, *, model: str, contents: Any, config: Any) -> Any:
+        self.tried.append(model)
+        out = self.outcomes[model]
+        if isinstance(out, Exception):
+            raise out
+
+        class R:
+            parsed = None
+            text = out
+        return R()
+
+
+def _client(models: _FakeModels) -> Any:
+    class C:
+        class aio:
+            pass
+    C.aio.models = models  # type: ignore[attr-defined]
+    return C
+
+
+@pytest.mark.anyio
+async def test_falls_back_to_next_model_when_primary_is_overloaded() -> None:
+    from google.genai import errors
+
+    from app.agent.llm import GeminiChatModel
+    ok = '{"reply": "Hi", "quickReplies": ["a", "b", "c", "d"]}'
+    fake = _FakeModels({"big": errors.ServerError(503, {"error": {"message": "busy"}}), "lite": ok})
+    r = await GeminiChatModel(_client(fake), ["big", "lite"]).reply("sys", [Turn("elder", "hi")])
+    assert fake.tried == ["big", "lite"]
+    assert r.quickReplies == ["a", "b", "c"]  # trimmed to 3
+
+
+@pytest.mark.anyio
+async def test_does_not_fall_back_on_non_capacity_errors() -> None:
+    from google.genai import errors
+
+    from app.agent.llm import GeminiChatModel
+    fake = _FakeModels({"big": errors.ClientError(400, {"error": {"message": "bad"}}), "lite": "{}"})
+    with pytest.raises(errors.ClientError):
+        await GeminiChatModel(_client(fake), ["big", "lite"]).reply("sys", [Turn("elder", "hi")])
+    assert fake.tried == ["big"]

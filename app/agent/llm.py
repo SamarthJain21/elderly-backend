@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+import logging
 from typing import Literal, Protocol
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 from google.oauth2 import service_account
 from pydantic import BaseModel, Field
 
@@ -30,18 +31,38 @@ class ChatModel(Protocol):
     async def reply(self, system: str, history: list[Turn]) -> AgentReply: ...
 
 
+log = logging.getLogger(__name__)
+
+
+def _is_capacity_error(exc: errors.APIError) -> bool:
+    """Overloaded (503) or rate-limited (429): worth trying the next model."""
+    return exc.code in (429, 503)
+
+
 class GeminiChatModel:
-    def __init__(self, client: genai.Client, model: str) -> None:
+    def __init__(self, client: genai.Client, models: list[str]) -> None:
+        if not models:
+            raise ValueError("at least one model required")
         self._client = client
-        self._model = model
+        self._models = models
 
     async def reply(self, system: str, history: list[Turn]) -> AgentReply:
         contents = [
             types.Content(role="user" if t.role == "elder" else "model", parts=[types.Part(text=t.text)])
             for t in history
         ]
+        for i, model in enumerate(self._models):
+            try:
+                return await self._generate(model, system, contents)
+            except errors.APIError as exc:
+                if not _is_capacity_error(exc) or i == len(self._models) - 1:
+                    raise
+                log.warning("Gemini %s unavailable (%s); falling back to %s", model, exc.code, self._models[i + 1])
+        raise AssertionError("unreachable")
+
+    async def _generate(self, model: str, system: str, contents: list[types.Content]) -> AgentReply:
         resp = await self._client.aio.models.generate_content(
-            model=self._model,
+            model=model,
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=system,
@@ -62,8 +83,7 @@ class GeminiChatModel:
         return out
 
 
-@lru_cache
-def get_chat_model() -> ChatModel:
+def _vertex_client() -> genai.Client:
     settings = get_settings()
     cred_path = settings.firebase_credentials
     credentials = (
@@ -73,10 +93,20 @@ def get_chat_model() -> ChatModel:
         if cred_path is not None and cred_path.exists()
         else None  # Cloud Run: use the service's identity (ADC)
     )
-    client = genai.Client(
+    return genai.Client(
         vertexai=True,
         project=settings.firebase_project_id,
         location=settings.vertex_location,
         credentials=credentials,
     )
-    return GeminiChatModel(client, settings.gemini_model)
+
+
+@lru_cache
+def get_chat_model() -> ChatModel:
+    """AI Studio key if GEMINI_API_KEY is set (free tier, no billing), else Vertex AI (needs Blaze)."""
+    settings = get_settings()
+    if settings.gemini_api_key is not None:
+        client = genai.Client(api_key=settings.gemini_api_key.get_secret_value())
+    else:
+        client = _vertex_client()
+    return GeminiChatModel(client, [settings.gemini_model, *settings.gemini_fallback_models])

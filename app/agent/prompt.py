@@ -41,8 +41,10 @@ def build_system_prompt(elder: dict[str, Any], today: list[Reminder], now_utc: d
     ]
 
     lines += ["", "What you know about them:"]
+    now_hhmm: str | None = None
     if tz:
         local = now_utc.astimezone(ZoneInfo(tz))
+        now_hhmm = f"{local:%H:%M}"
         lines.append(f"- Their local time is {local:%A %d %B %Y, %H:%M} ({tz}).")
     sleep = elder.get("sleep")
     if sleep:
@@ -58,6 +60,11 @@ def build_system_prompt(elder: dict[str, Any], today: list[Reminder], now_utc: d
     if elder.get("healthNotes"):
         lines.append(f"- Health notes from family: {elder['healthNotes']}")
     if today:
-        lines.append("- Today's reminders: " + "; ".join(f"{r.time} {r.title}" for r in today) + ".")
+        # Label past/upcoming here: small models get relative time wrong (e.g. just after midnight).
+        def when(r: Reminder) -> str:
+            if now_hhmm is None:
+                return ""
+            return " (already passed)" if r.time < now_hhmm else " (later today)"
+        lines.append("- Today's reminders: " + "; ".join(f"{r.time} {r.title}{when(r)}" for r in today) + ".")
 
     return "\n".join(lines)
