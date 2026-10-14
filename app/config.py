@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     firebase_credentials: Path | None = Path("service-account.json")
     cors_origins: list[str] = ["http://localhost:5173"]
     elder_email_domain: str = "elderly.app"
+    # Gemini via Vertex AI, billed to firebase_project_id.
+    gemini_model: str = "gemini-3.8-flash"
+    vertex_location: str = "global"
 
 
 @lru_cache

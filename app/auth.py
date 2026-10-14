@@ -25,13 +25,10 @@ class AuthedUser:
     role: Role | None
 
 
-def get_authed_user(
-    creds: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-) -> AuthedUser:
-    if creds is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing bearer token")
+def authenticate(token: str) -> AuthedUser:
+    """Verify a Firebase ID token and load the user's role. Raises HTTPException (401/403/503)."""
     try:
-        claims = firebase.verify_id_token(creds.credentials)
+        claims = firebase.verify_id_token(token)
     except (ValueError, fb_auth.InvalidIdTokenError, fb_auth.UserDisabledError) as exc:
         # InvalidIdTokenError covers expired and revoked tokens too.
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token") from exc
@@ -50,6 +47,14 @@ def get_authed_user(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Caretakers must sign in with Google")
 
     return AuthedUser(uid=uid, email=claims.get("email"), provider=provider, role=role)
+
+
+def get_authed_user(
+    creds: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> AuthedUser:
+    if creds is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing bearer token")
+    return authenticate(creds.credentials)
 
 
 def require_role(role: Role) -> Callable[[AuthedUser], AuthedUser]:

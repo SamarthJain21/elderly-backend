@@ -15,7 +15,7 @@ from app.schedule import Reminder, ReminderIn, local_today, reminders_for_day
 router = APIRouter(prefix="/elders/{elder_id}/reminders", tags=["reminders"])
 
 
-def _all_reminders(elder_id: str) -> list[Reminder]:
+def all_reminders(elder_id: str) -> list[Reminder]:
     docs = (
         firebase.get_db().collection("reminders")
         .where(filter=FieldFilter("elderId", "==", elder_id))
@@ -27,7 +27,7 @@ def _all_reminders(elder_id: str) -> list[Reminder]:
 @router.get("")
 def list_reminders(elder_id: str, user: CurrentUser) -> list[Reminder]:
     load_elder(user, elder_id)
-    return sorted(_all_reminders(elder_id), key=lambda r: (r.kind != "medication", r.time))
+    return sorted(all_reminders(elder_id), key=lambda r: (r.kind != "medication", r.time))
 
 
 class TodayReminders(BaseModel):
@@ -43,7 +43,7 @@ def todays_reminders(elder_id: str, user: CurrentUser) -> TodayReminders:
     if tz is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Assessment not completed")
     today = local_today(tz)
-    return TodayReminders(date=today, timezone=tz, reminders=reminders_for_day(_all_reminders(elder_id), today))
+    return TodayReminders(date=today, timezone=tz, reminders=reminders_for_day(all_reminders(elder_id), today))
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
