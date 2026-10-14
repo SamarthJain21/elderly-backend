@@ -1,10 +1,12 @@
-"""Elder <-> agent chat over WebSocket.
+"""Elder <-> agent chat over WebSocket, including the guided daily check-in.
 
 Protocol (JSON frames):
   client -> {"type": "auth", "token": "<Firebase ID token>"}      must be first, within 10s
   server -> {"type": "history", "messages": [Message, ...]}
+  server -> {"type": "checkin", "checkin": TodayCheckIn | null}   on connect and after each check-in turn
   client -> {"type": "message", "text": "..."}
-  server -> {"type": "message", "message": Message}               echo of the saved elder message
+  client -> {"type": "start_checkin", "mood": "good" | null}
+  server -> {"type": "message", "message": Message}               saved elder message (echo)
   server -> {"type": "typing"}
   server -> {"type": "message", "message": Message}               agent reply with quickReplies
   server -> {"type": "error", "message": "..."}                   recoverable; socket stays open
@@ -15,19 +17,22 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, ValidationError
 
+from app import checkin_store
 from app.access import load_elder
 from app.agent import messages
-from app.agent.llm import ChatModel, Turn, get_chat_model
+from app.agent.llm import AgentReply, ChatModel, CheckInTurn, Turn, get_chat_model
 from app.agent.messages import Message
-from app.agent.prompt import build_system_prompt
+from app.agent.prompt import build_checkin_prompt, build_system_prompt
 from app.auth import AuthedUser, authenticate
+from app.checkin import MAX_TURNS, MOOD_LABEL, CheckIn, Mood, assess, checkin_id, merge, next_missing
+from app.checkin_store import LogEntry, TodayCheckIn
 from app.routers.reminders import all_reminders
-from app.schedule import local_today, reminders_for_day
+from app.schedule import Reminder, local_today, reminders_for_day
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -38,9 +43,119 @@ HISTORY_TURNS = 20
 HISTORY_ON_CONNECT = 50
 
 
-class ClientMessage(BaseModel):
-    type: str
+class TextFrame(BaseModel):
+    type: Literal["message"]
     text: str = Field(min_length=1, max_length=1000)
+
+
+class StartCheckInFrame(BaseModel):
+    type: Literal["start_checkin"]
+    mood: Mood | None = None
+
+
+class Session:
+    """One connected client talking for one elder."""
+
+    def __init__(self, ws: WebSocket, user: AuthedUser, elder_id: str, model: ChatModel) -> None:
+        self.ws, self.user, self.elder_id, self.model = ws, user, elder_id, model
+
+    async def send(self, frame: dict[str, Any]) -> None:
+        await self.ws.send_json(frame)
+
+    async def _elder(self) -> dict[str, Any]:
+        return await asyncio.to_thread(load_elder, self.user, self.elder_id)  # fresh each turn
+
+    async def _today_reminders(self, elder: dict[str, Any], now: dt.datetime) -> list[Reminder]:
+        tz = elder.get("timezone")
+        if tz is None:
+            return []
+        everything = await asyncio.to_thread(all_reminders, self.elder_id)
+        return reminders_for_day(everything, local_today(tz, now))
+
+    async def today_checkin(self) -> TodayCheckIn | None:
+        elder = await self._elder()
+        return await asyncio.to_thread(checkin_store.today_checkin, self.elder_id, elder, dt.datetime.now(dt.UTC))
+
+    async def send_checkin_state(self) -> None:
+        state = await self.today_checkin()
+        await self.send({"type": "checkin", "checkin": state.model_dump(mode="json") if state else None})
+
+    async def _turns(self) -> list[Turn]:
+        history = await asyncio.to_thread(messages.recent, self.elder_id, HISTORY_TURNS)
+        turns = [Turn(role=m.sender, text=m.text) for m in history]
+        while turns and turns[0].role == "agent":  # Gemini expects a user turn first
+            turns.pop(0)
+        return turns
+
+    async def save_elder_message(self, text: str) -> None:
+        msg = Message(sender="elder", text=text, actedBy=self.user.uid if self.user.role == "caretaker" else None)
+        await asyncio.to_thread(messages.save, self.elder_id, msg)
+        await self.send({"type": "message", "message": msg.model_dump(mode="json")})
+
+    async def _reply(self, reply: AgentReply) -> None:
+        msg = Message(sender="agent", text=reply.reply, quickReplies=reply.quickReplies)
+        await asyncio.to_thread(messages.save, self.elder_id, msg)
+        await self.send({"type": "message", "message": msg.model_dump(mode="json")})
+
+    async def chat_turn(self) -> None:
+        elder, now = await self._elder(), dt.datetime.now(dt.UTC)
+        prompt = build_system_prompt(elder, await self._today_reminders(elder, now), now)
+        reply = await asyncio.wait_for(self.model.complete(prompt, await self._turns(), AgentReply), MODEL_TIMEOUT_S)
+        await self._reply(reply)
+
+    async def checkin_turn(self, c: CheckIn) -> None:
+        elder, now = await self._elder(), dt.datetime.now(dt.UTC)
+        prompt = build_checkin_prompt(elder, c, await self._today_reminders(elder, now), now)
+        turn = await asyncio.wait_for(self.model.complete(prompt, await self._turns(), CheckInTurn), MODEL_TIMEOUT_S)
+        c = merge(c, turn.extracted).model_copy(update={"turns": c.turns + 1})
+        if next_missing(c) is None or c.turns >= MAX_TURNS:
+            await self._finish(c, now)
+        else:
+            await asyncio.to_thread(checkin_store.save_checkin, c)
+        await self._reply(turn)
+        await self.send_checkin_state()
+
+    async def _finish(self, c: CheckIn, now: dt.datetime) -> None:
+        kind, escalate, summary = assess(c)
+        c = c.model_copy(update={"status": "done", "completedAt": now, "escalateFlag": escalate})
+        await asyncio.to_thread(checkin_store.save_checkin, c)
+        history = await asyncio.to_thread(messages.recent, self.elder_id, HISTORY_ON_CONNECT)
+        transcript = "\n".join(
+            f"{'Elder' if m.sender == 'elder' else 'Elderly'}: {m.text}" for m in history if m.createdAt >= c.startedAt
+        )
+        await asyncio.to_thread(checkin_store.save_transcript, c, transcript)
+        await asyncio.to_thread(
+            checkin_store.add_log, self.elder_id, LogEntry(message=summary, kind=kind, checkInId=c.id)
+        )
+
+    async def start_checkin(self, mood: Mood | None) -> None:
+        state = await self.today_checkin()
+        if state is None:
+            await self.send({"type": "error", "message": "Check-ins start after the assessment is done."})
+            return
+        if state.status == "done":
+            await self.send({"type": "error", "message": "You've already checked in today. 💚"})
+            return
+        c = state.checkIn
+        if c is None:
+            elder = await self._elder()
+            c = CheckIn(
+                id=checkin_id(self.elder_id, state.date), elderId=self.elder_id, date=state.date,
+                needsMedication=bool(elder.get("medicationSchedule")), startedAt=dt.datetime.now(dt.UTC), mood=mood,
+            )
+            await asyncio.to_thread(checkin_store.save_checkin, c)
+        await self.save_elder_message(f"I'm feeling {MOOD_LABEL[mood]}" if mood else "Let's do my check-in")
+        await self.send({"type": "typing"})
+        await self.checkin_turn(c)
+
+    async def on_text(self, text: str) -> None:
+        await self.save_elder_message(text)
+        await self.send({"type": "typing"})
+        state = await self.today_checkin()
+        if state is not None and state.checkIn is not None and state.checkIn.status == "in_progress":
+            await self.checkin_turn(state.checkIn)
+        else:
+            await self.chat_turn()
 
 
 async def _authenticate(ws: WebSocket, elder_id: str) -> AuthedUser | None:
@@ -60,64 +175,34 @@ async def _authenticate(ws: WebSocket, elder_id: str) -> AuthedUser | None:
     return user
 
 
-def _build_turns(history: list[Message]) -> list[Turn]:
-    turns = [Turn(role=m.sender, text=m.text) for m in history]
-    # Gemini expects the conversation to open with a user turn.
-    while turns and turns[0].role == "agent":
-        turns.pop(0)
-    return turns
-
-
-async def _agent_reply(model: ChatModel, user: AuthedUser, elder_id: str) -> Message:
-    elder = await asyncio.to_thread(load_elder, user, elder_id)  # fresh: assessment may have changed
-    now = dt.datetime.now(dt.UTC)
-    today = []
-    if tz := elder.get("timezone"):
-        everything = await asyncio.to_thread(all_reminders, elder_id)
-        today = reminders_for_day(everything, local_today(tz, now))
-    history = await asyncio.to_thread(messages.recent, elder_id, HISTORY_TURNS)
-    reply = await asyncio.wait_for(
-        model.reply(build_system_prompt(elder, today, now), _build_turns(history)), MODEL_TIMEOUT_S
-    )
-    return Message(sender="agent", text=reply.reply, quickReplies=reply.quickReplies)
-
-
 @router.websocket("/ws/{elder_id}")
 async def chat(ws: WebSocket, elder_id: str, model: Annotated[ChatModel, Depends(get_chat_model)]) -> None:
     await ws.accept()
     user = await _authenticate(ws, elder_id)
     if user is None:
         return
+    s = Session(ws, user, elder_id, model)
 
     history = await asyncio.to_thread(messages.recent, elder_id, HISTORY_ON_CONNECT)
-    await ws.send_json({"type": "history", "messages": [m.model_dump(mode="json") for m in history]})
+    await s.send({"type": "history", "messages": [m.model_dump(mode="json") for m in history]})
+    await s.send_checkin_state()
 
     try:
         while True:
             raw = await ws.receive_json()
+            kind = raw.get("type") if isinstance(raw, dict) else None
             try:
-                incoming = ClientMessage.model_validate(raw)
+                if kind == "message":
+                    frame = TextFrame.model_validate(raw)
+                    await s.on_text(frame.text.strip())
+                elif kind == "start_checkin":
+                    await s.start_checkin(StartCheckInFrame.model_validate(raw).mood)
             except ValidationError:
-                await ws.send_json({"type": "error", "message": "Message must be 1–1000 characters"})
-                continue
-            if incoming.type != "message":
-                continue
-
-            elder_msg = Message(
-                sender="elder", text=incoming.text.strip(),
-                actedBy=user.uid if user.role == "caretaker" else None,
-            )
-            await asyncio.to_thread(messages.save, elder_id, elder_msg)
-            await ws.send_json({"type": "message", "message": elder_msg.model_dump(mode="json")})
-            await ws.send_json({"type": "typing"})
-
-            try:
-                agent_msg = await _agent_reply(model, user, elder_id)
+                await s.send({"type": "error", "message": "Message must be 1–1000 characters"})
+            except WebSocketDisconnect:
+                raise
             except Exception:
-                log.exception("agent reply failed for elder %s", elder_id)
-                await ws.send_json({"type": "error", "message": "Sorry, I couldn't answer just now. Please try again."})
-                continue
-            await asyncio.to_thread(messages.save, elder_id, agent_msg)
-            await ws.send_json({"type": "message", "message": agent_msg.model_dump(mode="json")})
+                log.exception("chat turn failed for elder %s", elder_id)
+                await s.send({"type": "error", "message": "Sorry, I couldn't answer just now. Please try again."})
     except WebSocketDisconnect:
         return
