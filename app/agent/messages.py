@@ -9,6 +9,7 @@ from google.cloud.firestore import Query
 from pydantic import BaseModel, Field
 
 from app import firebase
+from app.tools.actions import ActionCard
 
 Sender = Literal["elder", "agent"]
 
@@ -21,6 +22,8 @@ class Message(BaseModel):
     createdAt: dt.datetime = Field(default_factory=lambda: dt.datetime.now(dt.UTC))
     # Set when a caretaker typed this in "Act as Elder" mode.
     actedBy: str | None = None
+    # Card for an order/booking the agent made or proposed in this message.
+    action: ActionCard | None = None
 
 
 def _col(elder_id: str):  # noqa: ANN202 — firestore CollectionReference
@@ -29,6 +32,15 @@ def _col(elder_id: str):  # noqa: ANN202 — firestore CollectionReference
 
 def save(elder_id: str, msg: Message) -> None:
     _col(elder_id).document(msg.id).set(msg.model_dump())
+
+
+def set_action_card(elder_id: str, message_id: str, card: ActionCard) -> None:
+    _col(elder_id).document(message_id).update({"action": card.model_dump()})
+
+
+def get(elder_id: str, message_id: str) -> Message | None:
+    snap = _col(elder_id).document(message_id).get()
+    return Message(**snap.to_dict()) if snap.exists else None
 
 
 def recent(elder_id: str, limit: int) -> list[Message]:

@@ -54,6 +54,13 @@ def create_reminder(elder_id: str, body: ReminderIn, user: CurrentUser) -> Remin
     return reminder
 
 
+def save_reminder(elder_id: str, title: str, time: str, day: dt.date) -> Reminder:
+    """One-off reminder created by the agent."""
+    reminder = Reminder(id=f"rem_{uuid.uuid4().hex[:16]}", elderId=elder_id, title=title, kind="custom", time=time, date=day)
+    firebase.get_db().collection("reminders").document(reminder.id).set(reminder.model_dump(mode="json"))
+    return reminder
+
+
 @router.delete("/{reminder_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_reminder(elder_id: str, reminder_id: str, user: CurrentUser) -> None:
     load_elder(user, elder_id, caretaker_only=True)

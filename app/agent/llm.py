@@ -4,7 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 import logging
-from typing import Literal, Protocol, TypeVar
+from collections.abc import Awaitable, Callable
+from typing import Any, Literal, Protocol, TypeVar
 
 from google import genai
 from google.genai import errors, types
@@ -37,8 +38,21 @@ class CheckInTurn(AgentReply):
 R = TypeVar("R", bound=AgentReply)
 
 
+Execute = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
 class ChatModel(Protocol):
     async def complete(self, system: str, history: list[Turn], schema: type[R]) -> R: ...
+
+    async def run(self, system: str, history: list[Turn], tools: list[dict[str, Any]], execute: Execute) -> AgentReply:
+        """Agent turn with tools. The model must call a function: `reply` to talk, or an action tool,
+        after which it's forced to `reply` given the tool's result. At most one action per turn."""
+        ...
+
+
+def _reply_from_args(args: dict[str, Any]) -> AgentReply:
+    quick = [str(q).strip() for q in args.get("quickReplies") or [] if str(q).strip()][:3]
+    return AgentReply(reply=str(args.get("text", "")).strip(), quickReplies=quick)
 
 
 log = logging.getLogger(__name__)
@@ -69,6 +83,60 @@ class GeminiChatModel:
                     raise
                 log.warning("Gemini %s unavailable (%s); falling back to %s", model, exc.code, self._models[i + 1])
         raise AssertionError("unreachable")
+
+    def _tool_config(self, system: str, tools: list[dict[str, Any]], allowed: list[str] | None) -> types.GenerateContentConfig:
+        decls = [types.FunctionDeclaration(name=t["name"], description=t["description"], parameters_json_schema=t["parameters"])
+                 for t in tools]
+        return types.GenerateContentConfig(
+            system_instruction=system,
+            tools=[types.Tool(function_declarations=decls)],
+            # ANY = must call a function. Free text is impossible, so it can't "pretend" to act.
+            tool_config=types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="ANY", allowed_function_names=allowed)),
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            temperature=0.5,
+        )
+
+    async def run(self, system: str, history: list[Turn], tools: list[dict[str, Any]], execute: Execute) -> AgentReply:
+        contents = [
+            types.Content(role="user" if t.role == "elder" else "model", parts=[types.Part(text=t.text)])
+            for t in history
+        ]
+        for i, model in enumerate(self._models):
+            try:
+                first = await self._client.aio.models.generate_content(
+                    model=model, contents=contents, config=self._tool_config(system, tools, None))
+            except errors.APIError as exc:
+                if not _is_capacity_error(exc) or i == len(self._models) - 1:
+                    raise
+                log.warning("Gemini %s unavailable (%s); falling back to %s", model, exc.code, self._models[i + 1])
+                continue
+            return await self._after_first(model, system, contents, tools, first, execute)
+        raise AssertionError("unreachable")
+
+    async def _after_first(self, model: str, system: str, contents: list[types.Content], tools: list[dict[str, Any]],
+                           first: types.GenerateContentResponse, execute: Execute) -> AgentReply:
+        calls = first.function_calls or []
+        if not calls:
+            return AgentReply(reply=(first.text or "").strip() or "Sorry, could you say that again?", quickReplies=[])
+        call = next((c for c in calls if c.name != "reply"), calls[0])
+        if call.name == "reply":
+            return _reply_from_args(dict(call.args or {}))
+
+        result = await execute(call.name or "", dict(call.args or {}))
+        # Send back the model's own content: Gemini 3 requires its thought_signature on the function call.
+        followup = [*contents, first.candidates[0].content,  # type: ignore[index]
+                    types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(name=call.name, response=result))])]
+        try:
+            # Same model as the first call: thought signatures don't transfer across models.
+            second = await self._client.aio.models.generate_content(
+                model=model, contents=followup, config=self._tool_config(system, tools, ["reply"]))
+            reply_call = next((c for c in second.function_calls or [] if c.name == "reply"), None)
+            if reply_call is not None:
+                return _reply_from_args(dict(reply_call.args or {}))
+        except errors.APIError:
+            log.exception("Gemini follow-up failed after tool %s ran", call.name)
+        # The action already happened: never fail the turn now; fall back to a plain statement.
+        return AgentReply(reply=str(result.get("say") or "Done."), quickReplies=[])
 
     async def _generate(self, model: str, system: str, contents: list[types.Content], schema: type[R]) -> R:
         resp = await self._client.aio.models.generate_content(

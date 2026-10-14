@@ -59,3 +59,38 @@ def default_rules(currency: Currency) -> AutonomyRules:
         "send_message_to_caretaker": ToolRule(mode="autonomous"),
         "set_reminder": ToolRule(mode="autonomous"),
     })
+
+
+Decision = Literal["execute", "ask_elder", "caretaker_approve", "block"]
+
+# Fixed in code, never configurable: emergencies can't wait; weather is read-only.
+ALWAYS_EXECUTE: frozenset[str] = frozenset({"escalate_emergency", "check_weather"})
+
+
+def decide(tool: str, rules: AutonomyRules, cost_minor: int | None = None) -> Decision:
+    """What happens when the agent wants to use `tool`. Fails safe: unknown → caretaker approves."""
+    if tool in ALWAYS_EXECUTE:
+        return "execute"
+    rule = rules.tools.get(tool)  # type: ignore[call-overload]
+    if rule is None:
+        return "caretaker_approve"
+    if rule.mode == "blocked":
+        return "block"
+    # The limit applies in every mode, including "do it right away".
+    if tool in SPENDING_TOOLS:
+        if cost_minor is None or rule.limitMinor is None or cost_minor > rule.limitMinor:
+            return "caretaker_approve"
+    return {
+        "autonomous": "execute",
+        "elder_confirm": "ask_elder",
+        "caretaker_approve": "caretaker_approve",
+    }[rule.mode]
+
+
+_SYMBOL: dict[str, str] = {"INR": "₹", "THB": "฿", "SGD": "S$"}
+
+
+def format_money(minor: int, currency: str) -> str:
+    """Display only. Integer math — no floats anywhere near money."""
+    whole, frac = divmod(minor, 100)
+    return f"{_SYMBOL.get(currency, currency + ' ')}{whole:,}" + (f".{frac:02d}" if frac else "")

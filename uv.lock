@@ -45,6 +45,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "firebase-admin" },
     { name = "google-genai" },
+    { name = "httpx" },
     { name = "pydantic-settings" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -60,6 +61,7 @@ requires-dist = [
     { name = "fastapi" },
     { name = "firebase-admin", specifier = ">=7.7.0" },
     { name = "google-genai", specifier = ">=2.30.1" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic-settings", specifier = ">=2.16.0" },
     { name = "uvicorn", extras = ["standard"] },
 ]

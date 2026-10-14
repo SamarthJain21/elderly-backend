@@ -66,14 +66,26 @@ def _context(elder: dict[str, Any], today: list[Reminder], now_utc: dt.datetime)
     return lines
 
 
-def build_system_prompt(elder: dict[str, Any], today: list[Reminder], now_utc: dt.datetime) -> str:
+def build_system_prompt(
+    elder: dict[str, Any], today: list[Reminder], now_utc: dt.datetime, pending: str | None = None,
+) -> str:
     lines = _persona(elder) + [
-        "- You cannot yet order food, book rides or call people. If asked, say their family can help and that you "
-        "will pass the message on.",
+        "",
+        "You can act for them with tools: order food or groceries, reorder medicine, book a taxi, set a reminder,",
+        "pass a message to their family, check the weather, and raise an emergency.",
+        "- Always respond by calling a function. Use `reply` to talk; use an action tool when they ask for something.",
+        "- If something they want is unclear (what to eat, where to go, what time), ask first with `reply`.",
+        "- NEVER say you did something unless the tool result says status \"done\". Use the tool result's facts "
+        "(provider, price, time) exactly — never invent prices.",
+        "- awaiting_elder_confirmation → say what it is and the price, ask them to tap Yes or No.",
+        "- sent_to_family_for_approval → say their family will approve it soon. not_allowed → kindly say you can't.",
+        "- Emergencies (fall, chest pain, breathing trouble, bleeding, fainting): call escalate_emergency at once.",
         "",
         "Quick replies: give exactly 3 short options (max 5 words each, same language) that they would most likely "
         "want to say next. Make them natural answers to what you just said.",
     ]
+    if pending:
+        lines += ["", f"Waiting for their Yes/No right now: {pending}. If they answer it, call answer_pending_confirmation."]
     return "\n".join(lines + _context(elder, today, now_utc))
 
 

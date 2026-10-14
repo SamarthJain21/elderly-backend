@@ -14,6 +14,7 @@ from app.agent.prompt import build_system_prompt
 from app.auth import AuthedUser
 from app.main import app
 from app.routers import chat
+from app.autonomy import default_rules
 from app.checkin import CheckIn, Extracted
 from app.checkin_store import LogEntry
 from app.schedule import Reminder
@@ -26,10 +27,26 @@ ELDER_DOC = {
 
 
 class FakeModel:
-    def __init__(self, fail: bool = False, extracted: list[dict[str, Any]] | None = None) -> None:
+    def __init__(self, fail: bool = False, extracted: list[dict[str, Any]] | None = None,
+                 tool_calls: list[tuple[str, dict[str, Any]] | None] | None = None) -> None:
         self.calls: list[tuple[str, list[Turn]]] = []
         self.fail = fail
         self.extracted = list(extracted or [])  # one per check-in turn
+        self.tool_calls = list(tool_calls or [])  # one per chat turn; None = just reply
+        self.tool_results: list[dict[str, Any]] = []
+        self.offered: list[list[str]] = []
+
+    async def run(self, system: str, history: list[Turn], tools: list[dict[str, Any]], execute: Any) -> AgentReply:
+        self.calls.append((system, history))
+        self.offered.append([t["name"] for t in tools])
+        if self.fail:
+            raise RuntimeError("model down")
+        call = self.tool_calls.pop(0) if self.tool_calls else None
+        if call is None:
+            return AgentReply(reply="नमस्ते!", quickReplies=["अच्छा", "ठीक हूँ", "धन्यवाद"])
+        result = await execute(*call)
+        self.tool_results.append(result)
+        return AgentReply(reply=f"status={result['status']}", quickReplies=["Yes", "No", "Later"])
 
     async def complete(self, system: str, history: list[Turn], schema: type[Any]) -> Any:
         self.calls.append((system, history))
@@ -41,6 +58,8 @@ class FakeModel:
 
 
 class Store(dict[str, list[Message]]):
+    actions: dict[str, Any]
+    rules: Any
     checkins: dict[str, CheckIn]
     logs: list[LogEntry]
     transcripts: dict[str, str]
@@ -56,6 +75,14 @@ def store(monkeypatch: pytest.MonkeyPatch) -> Store:
     monkeypatch.setattr(chat.checkin_store, "save_checkin", lambda c: db.checkins.__setitem__(c.id, c))
     monkeypatch.setattr(chat.checkin_store, "add_log", lambda _eid, e: db.logs.append(e))
     monkeypatch.setattr(chat.checkin_store, "save_transcript", lambda c, t: db.transcripts.__setitem__(c.id, t))
+    # Agent actions + rules, in memory.
+    db.actions = {}
+    monkeypatch.setattr(chat, "load_rules", lambda _eid, _elder: db.rules)
+    db.rules = default_rules("INR")
+    monkeypatch.setattr(chat.actions, "save", lambda a: db.actions.__setitem__(a.id, a.model_copy(deep=True)))
+    monkeypatch.setattr(chat.actions, "get", lambda _eid, aid: db.actions[aid].model_copy(deep=True) if aid in db.actions else None)
+    monkeypatch.setattr(chat.actions, "with_status", lambda _eid, st: [a for a in db.actions.values() if a.status == st])
+    monkeypatch.setattr(chat.messages, "set_action_card", lambda _eid, mid, card: None)
 
     def fake_auth(token: str) -> AuthedUser:
         if token != "elder-token":
@@ -294,3 +321,120 @@ def test_messages_during_checkin_use_checkin_prompt_then_chat_after(store: Store
     assert "daily check-in" in prompts[0] and "daily check-in" in prompts[1]
     assert "daily check-in" not in prompts[2]
     assert store.logs[0].kind == "warn"  # medicine not taken
+
+
+
+def _connect(ws: Any) -> None:
+    ws.send_json({"type": "auth", "token": "elder-token"})
+    ws.receive_json(), ws.receive_json()
+
+
+def _with_model(m: FakeModel) -> None:
+    app.dependency_overrides[get_chat_model] = lambda: m
+
+
+def test_order_within_limit_asks_elder_then_tap_yes_places_it(store: Store) -> None:
+    m = FakeModel(tool_calls=[("order_food", {"items": ["dal", "2 rotis"]})])
+    _with_model(m)
+    try:
+        with TestClient(app).websocket_connect("/ws/e1") as ws:
+            _connect(ws)
+            ws.send_json({"type": "message", "text": "order dal and two rotis"})
+            msg = _agent_reply(ws)
+            card = msg["action"]
+            assert m.tool_results[0]["status"] == "awaiting_elder_confirmation"
+            assert card["status"] == "awaiting_elder" and card["provider"] == "Swiggy" and card["amount"] == "₹200"
+            ws.send_json({"type": "confirm", "actionId": card["id"], "approve": True})
+            frames = [ws.receive_json() for _ in range(3)]  # typing, action_update, narrated message
+    finally:
+        app.dependency_overrides.clear()
+    update = next(f for f in frames if f["type"] == "action_update")
+    assert update["action"]["status"] == "done" and update["action"]["orderId"].startswith("SWIGGY-")
+    assert any(f["type"] == "message" and f["message"]["sender"] == "agent" for f in frames)
+    assert any(l.message.startswith("Done — Food order") for l in store.logs)
+
+
+def test_tap_no_cancels_and_cannot_be_reused(store: Store) -> None:
+    _with_model(FakeModel(tool_calls=[("order_food", {"items": ["idli"]})]))
+    try:
+        with TestClient(app).websocket_connect("/ws/e1") as ws:
+            _connect(ws)
+            ws.send_json({"type": "message", "text": "get me idli"})
+            aid = _agent_reply(ws)["action"]["id"]
+            ws.send_json({"type": "confirm", "actionId": aid, "approve": False})
+            [ws.receive_json() for _ in range(3)]
+            ws.send_json({"type": "confirm", "actionId": aid, "approve": True})
+            frames = [ws.receive_json() for _ in range(2)]
+    finally:
+        app.dependency_overrides.clear()
+    assert store.actions[aid].status == "cancelled"
+    assert frames[-1]["type"] == "error"
+
+
+def test_over_limit_goes_to_caretaker_even_when_autonomous(store: Store) -> None:
+    d = store.rules.model_dump()
+    d["tools"]["order_food"] = {"mode": "autonomous", "limitMinor": 10_000}  # ₹100
+    store.rules = type(store.rules).model_validate(d)
+    m = FakeModel(tool_calls=[("order_food", {"items": ["dal", "2 rotis"]})])  # ₹200
+    _with_model(m)
+    try:
+        with TestClient(app).websocket_connect("/ws/e1") as ws:
+            _connect(ws)
+            ws.send_json({"type": "message", "text": "order dal"})
+            assert _agent_reply(ws)["action"]["status"] == "awaiting_caretaker"
+    finally:
+        app.dependency_overrides.clear()
+    assert m.tool_results[0]["status"] == "sent_to_family_for_approval"
+    assert "above the spending limit" in store.logs[-1].message and store.logs[-1].kind == "warn"
+
+
+def test_blocked_tool_refuses_and_alerts_family(store: Store) -> None:
+    d = store.rules.model_dump()
+    d["tools"]["book_ride"] = {"mode": "blocked", "limitMinor": 0}
+    store.rules = type(store.rules).model_validate(d)
+    m = FakeModel(tool_calls=[("book_ride", {"destination": "the casino"})])
+    _with_model(m)
+    try:
+        with TestClient(app).websocket_connect("/ws/e1") as ws:
+            _connect(ws)
+            ws.send_json({"type": "message", "text": "take me to the casino"})
+            _agent_reply(ws)
+    finally:
+        app.dependency_overrides.clear()
+    assert m.tool_results[0]["status"] == "not_allowed"
+    assert store.logs[-1].kind == "alert"
+
+
+def test_saying_yes_answers_pending_confirmation_and_tool_is_only_offered_then(store: Store) -> None:
+    m = FakeModel(tool_calls=[("order_food", {"items": ["dal"]}), ("answer_pending_confirmation", {"approve": True})])
+    _with_model(m)
+    try:
+        with TestClient(app).websocket_connect("/ws/e1") as ws:
+            _connect(ws)
+            ws.send_json({"type": "message", "text": "order dal"})
+            _agent_reply(ws)
+            ws.send_json({"type": "message", "text": "yes please"})
+            _agent_reply(ws)
+    finally:
+        app.dependency_overrides.clear()
+    assert "answer_pending_confirmation" not in m.offered[0]
+    assert "answer_pending_confirmation" in m.offered[1]
+    assert m.tool_results[1]["status"] == "done"
+
+
+def test_emergency_always_alerts_even_if_everything_blocked(store: Store) -> None:
+    d = store.rules.model_dump()
+    for t in d["tools"].values():
+        t["mode"] = "blocked"
+    store.rules = type(store.rules).model_validate(d)
+    m = FakeModel(tool_calls=[("escalate_emergency", {"description": "fell in the bathroom"})])
+    _with_model(m)
+    try:
+        with TestClient(app).websocket_connect("/ws/e1") as ws:
+            _connect(ws)
+            ws.send_json({"type": "message", "text": "I fell"})
+            _agent_reply(ws)
+    finally:
+        app.dependency_overrides.clear()
+    assert m.tool_results[0]["status"] == "family_alerted" and m.tool_results[0]["emergencyNumber"] == "112"
+    assert store.logs[-1].kind == "alert" and "fell in the bathroom" in store.logs[-1].message

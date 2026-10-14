@@ -6,6 +6,8 @@ Protocol (JSON frames):
   server -> {"type": "checkin", "checkin": TodayCheckIn | null}   on connect and after each check-in turn
   client -> {"type": "message", "text": "..."}
   client -> {"type": "start_checkin", "mood": "good" | null}
+  client -> {"type": "confirm", "actionId": "...", "approve": true}   Yes/No on an action card
+  server -> {"type": "action_update", "messageId": "...", "action": ActionCard}
   server -> {"type": "message", "message": Message}               saved elder message (echo)
   server -> {"type": "typing"}
   server -> {"type": "message", "message": Message}               agent reply with quickReplies
@@ -24,15 +26,20 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app import checkin_store
 from app.access import load_elder
-from app.agent import messages
+from app.agent import live, messages
 from app.agent.llm import AgentReply, ChatModel, CheckInTurn, Turn, get_chat_model
+from app.agent.narrate import narrate, update_card
 from app.agent.messages import Message
 from app.agent.prompt import build_checkin_prompt, build_system_prompt
 from app.auth import AuthedUser, authenticate
 from app.checkin import MAX_TURNS, MOOD_LABEL, CheckIn, Mood, assess, checkin_id, merge, next_missing
 from app.checkin_store import LogEntry, TodayCheckIn
 from app.routers.reminders import all_reminders
+from app.routers.settings import load_rules
 from app.schedule import Reminder, local_today, reminders_for_day
+from app.tools import actions
+from app.tools.actions import Action, ActionCard
+from app.tools.executor import ToolContext, perform, run_tool, tool_declarations
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -51,6 +58,12 @@ class TextFrame(BaseModel):
 class StartCheckInFrame(BaseModel):
     type: Literal["start_checkin"]
     mood: Mood | None = None
+
+
+class ConfirmFrame(BaseModel):
+    type: Literal["confirm"]
+    actionId: str
+    approve: bool
 
 
 class Session:
@@ -92,16 +105,63 @@ class Session:
         await asyncio.to_thread(messages.save, self.elder_id, msg)
         await self.send({"type": "message", "message": msg.model_dump(mode="json")})
 
-    async def _reply(self, reply: AgentReply) -> None:
-        msg = Message(sender="agent", text=reply.reply, quickReplies=reply.quickReplies)
+    async def _reply(self, reply: AgentReply, action: Action | None = None) -> None:
+        msg = Message(sender="agent", text=reply.reply, quickReplies=reply.quickReplies,
+                      action=ActionCard.of(action) if action else None)
         await asyncio.to_thread(messages.save, self.elder_id, msg)
+        if action is not None:
+            action.messageId = msg.id
+            await asyncio.to_thread(actions.save, action)
         await self.send({"type": "message", "message": msg.model_dump(mode="json")})
 
-    async def chat_turn(self) -> None:
+    async def _pending_for_elder(self) -> Action | None:
+        waiting = await asyncio.to_thread(actions.with_status, self.elder_id, "awaiting_elder")
+        return waiting[-1] if waiting else None
+
+    async def resolve(self, a: Action, approve: bool, elder: dict[str, Any]) -> dict[str, Any]:
+        """Elder said Yes/No to an action (tap or voice). Deterministic — no model involved in the decision."""
+        fresh = await asyncio.to_thread(actions.get, self.elder_id, a.id)
+        if fresh is None or fresh.status != "awaiting_elder":
+            return {"status": "already_decided"}
+        fresh.decidedBy = self.user.uid
+        if approve:
+            result = await perform(fresh, elder)
+        else:
+            fresh.status = "cancelled"
+            await asyncio.to_thread(actions.save, fresh)
+            result = {"status": "cancelled", "say": "Okay, I won't do that."}
+        await update_card(fresh)
+        return result
+
+    async def chat_turn(self, text: str) -> None:
         elder, now = await self._elder(), dt.datetime.now(dt.UTC)
-        prompt = build_system_prompt(elder, await self._today_reminders(elder, now), now)
-        reply = await asyncio.wait_for(self.model.complete(prompt, await self._turns(), AgentReply), MODEL_TIMEOUT_S)
-        await self._reply(reply)
+        rules = await asyncio.to_thread(load_rules, self.elder_id, elder)
+        pending = await self._pending_for_elder()
+        prompt = build_system_prompt(elder, await self._today_reminders(elder, now), now, pending.summary() if pending else None)
+        ctx = ToolContext(elder_id=self.elder_id, elder=elder, rules=rules, request_text=text, actor_uid=self.user.uid)
+
+        async def execute(name: str, args: dict[str, Any]) -> dict[str, Any]:
+            if name == "answer_pending_confirmation" and pending is not None:
+                return await self.resolve(pending, bool(args.get("approve")), elder)
+            return await run_tool(ctx, name, args)
+
+        reply = await asyncio.wait_for(
+            self.model.run(prompt, await self._turns(), tool_declarations(pending is not None), execute), MODEL_TIMEOUT_S,
+        )
+        await self._reply(reply, ctx.touched[-1] if ctx.touched else None)
+
+    async def on_confirm(self, action_id: str, approve: bool) -> None:
+        a = await asyncio.to_thread(actions.get, self.elder_id, action_id)
+        if a is None:
+            await self.send({"type": "error", "message": "That request has expired."})
+            return
+        elder = await self._elder()
+        await self.send({"type": "typing"})
+        result = await self.resolve(a, approve, elder)
+        if result["status"] == "already_decided":
+            await self.send({"type": "error", "message": "That's already been decided."})
+            return
+        await narrate(self.model, elder, self.elder_id, f"{a.summary()} → {result}", str(result.get("say", "Okay.")))
 
     async def checkin_turn(self, c: CheckIn) -> None:
         elder, now = await self._elder(), dt.datetime.now(dt.UTC)
@@ -155,7 +215,7 @@ class Session:
         if state is not None and state.checkIn is not None and state.checkIn.status == "in_progress":
             await self.checkin_turn(state.checkIn)
         else:
-            await self.chat_turn()
+            await self.chat_turn(text)
 
 
 async def _authenticate(ws: WebSocket, elder_id: str) -> AuthedUser | None:
@@ -182,6 +242,7 @@ async def chat(ws: WebSocket, elder_id: str, model: Annotated[ChatModel, Depends
     if user is None:
         return
     s = Session(ws, user, elder_id, model)
+    live.register(elder_id, s.send)
 
     history = await asyncio.to_thread(messages.recent, elder_id, HISTORY_ON_CONNECT)
     await s.send({"type": "history", "messages": [m.model_dump(mode="json") for m in history]})
@@ -197,6 +258,9 @@ async def chat(ws: WebSocket, elder_id: str, model: Annotated[ChatModel, Depends
                     await s.on_text(frame.text.strip())
                 elif kind == "start_checkin":
                     await s.start_checkin(StartCheckInFrame.model_validate(raw).mood)
+                elif kind == "confirm":
+                    frame_c = ConfirmFrame.model_validate(raw)
+                    await s.on_confirm(frame_c.actionId, frame_c.approve)
             except ValidationError:
                 await s.send({"type": "error", "message": "Message must be 1–1000 characters"})
             except WebSocketDisconnect:
@@ -206,3 +270,5 @@ async def chat(ws: WebSocket, elder_id: str, model: Annotated[ChatModel, Depends
                 await s.send({"type": "error", "message": "Sorry, I couldn't answer just now. Please try again."})
     except WebSocketDisconnect:
         return
+    finally:
+        live.unregister(elder_id, s.send)

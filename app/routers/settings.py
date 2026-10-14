@@ -4,7 +4,6 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from fastapi import APIRouter
-from google.cloud.firestore_v1.base_query import FieldFilter
 from pydantic import BaseModel, Field
 
 from app import firebase
@@ -26,11 +25,14 @@ def _rules_from(doc: dict[str, Any], elder: dict[str, Any]) -> AutonomyRules:
     )
 
 
-@router.get("/rules")
-def get_rules(elder_id: str, user: CurrentUser) -> AutonomyRules:
-    elder = load_elder(user, elder_id)
+def load_rules(elder_id: str, elder: dict[str, Any]) -> AutonomyRules:
     doc = firebase.get_db().collection("rules").document(elder_id).get().to_dict() or {}
     return _rules_from(doc, elder)
+
+
+@router.get("/rules")
+def get_rules(elder_id: str, user: CurrentUser) -> AutonomyRules:
+    return load_rules(elder_id, load_elder(user, elder_id))
 
 
 @router.put("/rules")
@@ -52,6 +54,7 @@ class ProfileUpdate(BaseModel):
     phone: str = Field(min_length=5, max_length=20)
     language: Language
     sharingTier: SharingTier
+    city: str = Field(default="", max_length=100)  # for weather; later delivery/pickup address
     emergencyContacts: list[EmergencyContact] = Field(default_factory=list, max_length=10)
 
 
@@ -60,7 +63,8 @@ def get_profile(elder_id: str, user: CurrentUser) -> ProfileUpdate:
     e = load_elder(user, elder_id)
     return ProfileUpdate(
         name=e["name"], phone=e["phone"], language=e["language"],
-        sharingTier=e.get("sharingTier", "daily_summary"), emergencyContacts=e.get("emergencyContacts", []),
+        sharingTier=e.get("sharingTier", "daily_summary"), city=e.get("city", ""),
+        emergencyContacts=e.get("emergencyContacts", []),
     )
 
 
@@ -74,24 +78,3 @@ def put_profile(elder_id: str, body: ProfileUpdate, user: CurrentUser) -> Profil
     batch.update(db.collection("users").document(elder_id), {"displayName": body.name, "language": body.language})
     batch.commit()
     return body
-
-
-class Approval(BaseModel):
-    id: str
-    actionId: str
-    elderId: str
-    status: Literal["pending", "approved", "declined"]
-    elderRequestText: str
-
-
-@router.get("/approvals")
-def pending_approvals(elder_id: str, user: CurrentUser) -> list[Approval]:
-    """Filled by the agent's tools later; caretaker sees what's waiting on them."""
-    load_elder(user, elder_id, caretaker_only=True)
-    docs = (
-        firebase.get_db().collection("approvals")
-        .where(filter=FieldFilter("elderId", "==", elder_id))
-        .where(filter=FieldFilter("status", "==", "pending"))
-        .stream()
-    )
-    return [Approval(id=d.id, **(d.to_dict() or {})) for d in docs]

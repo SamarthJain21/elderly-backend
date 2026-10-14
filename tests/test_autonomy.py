@@ -49,3 +49,40 @@ def test_rejects_missing_tools() -> None:
 
 def test_blocked_mode_is_allowed() -> None:
     assert AutonomyRules.model_validate(_with("book_ride", {"mode": "blocked", "limitMinor": 0})).tools["book_ride"].mode == "blocked"
+
+
+from app.autonomy import decide  # noqa: E402
+
+
+def _rules(**modes: tuple[str, int | None]) -> AutonomyRules:
+    d = default_rules("INR").model_dump()
+    for tool, (mode, limit) in modes.items():
+        d["tools"][tool] = {"mode": mode, "limitMinor": limit}
+    return AutonomyRules.model_validate(d)
+
+
+def test_emergency_and_weather_always_execute_even_if_everything_is_blocked() -> None:
+    r = _rules(order_food=("blocked", 0))
+    assert decide("escalate_emergency", r) == "execute"
+    assert decide("check_weather", r) == "execute"
+
+
+def test_modes_map_to_decisions_within_limit() -> None:
+    assert decide("order_food", _rules(order_food=("autonomous", 50_000)), 18_000) == "execute"
+    assert decide("order_food", _rules(order_food=("elder_confirm", 50_000)), 18_000) == "ask_elder"
+    assert decide("order_food", _rules(order_food=("caretaker_approve", 50_000)), 18_000) == "caretaker_approve"
+    assert decide("order_food", _rules(order_food=("blocked", 50_000)), 18_000) == "block"
+
+
+def test_over_limit_goes_to_caretaker_even_in_autonomous_mode() -> None:
+    r = _rules(order_food=("autonomous", 50_000))
+    assert decide("order_food", r, 50_000) == "execute"       # exactly at the limit is fine
+    assert decide("order_food", r, 50_001) == "caretaker_approve"
+
+
+def test_spending_tool_without_a_quote_fails_safe() -> None:
+    assert decide("order_food", _rules(order_food=("autonomous", 50_000)), None) == "caretaker_approve"
+
+
+def test_unknown_tool_fails_safe() -> None:
+    assert decide("transfer_money", default_rules("INR")) == "caretaker_approve"
