@@ -62,6 +62,7 @@ class FakeModel:
 
 
 class Store(dict[str, list[Message]]):
+    family: list[Any]
     actions: dict[str, Any]
     rules: Any
     checkins: dict[str, CheckIn]
@@ -87,6 +88,10 @@ def store(monkeypatch: pytest.MonkeyPatch) -> Store:
     monkeypatch.setattr(chat.actions, "get", lambda _eid, aid: db.actions[aid].model_copy(deep=True) if aid in db.actions else None)
     monkeypatch.setattr(chat.actions, "with_status", lambda _eid, st: [a for a in db.actions.values() if a.status == st])
     monkeypatch.setattr(chat.messages, "set_action_card", lambda _eid, mid, card: None)
+    db.family = []
+    monkeypatch.setattr(chat.family, "save", lambda _eid, m: db.family.append(m))
+    monkeypatch.setattr(chat.family, "recent", lambda _eid, n: db.family[-n:])
+    monkeypatch.setattr(chat.family, "caretaker_name", lambda uid: "Emma")
 
     async def fake_geocode(q: str, tz: Any = None, near: Any = None) -> Place | None:
         return None if "nowhere" in q else Place(lat=18.53, lng=73.88, name=f"{q} (OSM)")
@@ -146,6 +151,7 @@ def test_message_round_trip_saves_both_sides(store: dict[str, list[Message]], mo
     with TestClient(app).websocket_connect("/ws/e1") as ws:
         ws.send_json({"type": "auth", "token": "elder-token"})
         assert ws.receive_json() == {"type": "history", "messages": []}
+        assert ws.receive_json() == {"type": "family_history", "messages": []}
         assert ws.receive_json()["type"] == "checkin"
         ws.send_json({"type": "message", "text": "  hello  "})
         echo = ws.receive_json()
@@ -164,9 +170,9 @@ def test_model_failure_reports_error_and_keeps_socket_open(store: dict[str, list
     try:
         with TestClient(app).websocket_connect("/ws/e1") as ws:
             ws.send_json({"type": "auth", "token": "elder-token"})
-            ws.receive_json(), ws.receive_json()
+            ws.receive_json(), ws.receive_json(), ws.receive_json()
             ws.send_json({"type": "message", "text": "hi"})
-            ws.receive_json(), ws.receive_json()
+            ws.receive_json(), ws.receive_json()  # echo, typing
             assert ws.receive_json()["type"] == "error"
             ws.send_json({"type": "message", "text": "still there?"})
             assert ws.receive_json()["type"] == "message"
@@ -178,7 +184,7 @@ def test_model_failure_reports_error_and_keeps_socket_open(store: dict[str, list
 def test_rejects_empty_and_oversized_messages(store: Any, model: FakeModel) -> None:
     with TestClient(app).websocket_connect("/ws/e1") as ws:
         ws.send_json({"type": "auth", "token": "elder-token"})
-        ws.receive_json(), ws.receive_json()
+        ws.receive_json(), ws.receive_json(), ws.receive_json()
         ws.send_json({"type": "message", "text": ""})
         assert ws.receive_json()["type"] == "error"
         ws.send_json({"type": "message", "text": "x" * 1001})
@@ -191,7 +197,7 @@ def test_history_sent_to_model_starts_with_elder_turn(store: dict[str, list[Mess
     with TestClient(app).websocket_connect("/ws/e1") as ws:
         ws.send_json({"type": "auth", "token": "elder-token"})
         assert len(ws.receive_json()["messages"]) == 2
-        ws.receive_json()
+        ws.receive_json(), ws.receive_json()
         ws.send_json({"type": "message", "text": "how are you"})
         for _ in range(3):
             ws.receive_json()
@@ -283,7 +289,7 @@ def test_guided_checkin_collects_all_fields_then_logs(store: Store) -> None:
     try:
         with TestClient(app).websocket_connect("/ws/e1") as ws:
             ws.send_json({"type": "auth", "token": "elder-token"})
-            ws.receive_json(), ws.receive_json()
+            ws.receive_json(), ws.receive_json(), ws.receive_json()
             ws.send_json({"type": "start_checkin", "mood": "good"})
             assert _agent_reply(ws)["quickReplies"] == ["a", "b", "c"]
             for text in ["badly", "tea and toast", "yes I took it"]:
@@ -306,7 +312,7 @@ def test_checkin_cannot_be_started_twice_in_a_day(store: Store, model: FakeModel
     model.extracted = [{"mood": "good", "sleepQuality": "well", "meals": "rice", "medicationTaken": True}]
     with TestClient(app).websocket_connect("/ws/e1") as ws:
         ws.send_json({"type": "auth", "token": "elder-token"})
-        ws.receive_json(), ws.receive_json()
+        ws.receive_json(), ws.receive_json(), ws.receive_json()
         ws.send_json({"type": "start_checkin", "mood": "great"})
         _agent_reply(ws)
         ws.receive_json()  # checkin state
@@ -318,7 +324,7 @@ def test_messages_during_checkin_use_checkin_prompt_then_chat_after(store: Store
     model.extracted = [{"mood": "okay"}, {"sleepQuality": "well", "meals": "dal", "medicationTaken": False}]
     with TestClient(app).websocket_connect("/ws/e1") as ws:
         ws.send_json({"type": "auth", "token": "elder-token"})
-        ws.receive_json(), ws.receive_json()
+        ws.receive_json(), ws.receive_json(), ws.receive_json()
         ws.send_json({"type": "start_checkin"})
         _agent_reply(ws), ws.receive_json()
         ws.send_json({"type": "message", "text": "slept well, had dal, forgot my pill"})
@@ -334,7 +340,7 @@ def test_messages_during_checkin_use_checkin_prompt_then_chat_after(store: Store
 
 def _connect(ws: Any) -> None:
     ws.send_json({"type": "auth", "token": "elder-token"})
-    ws.receive_json(), ws.receive_json()
+    ws.receive_json(), ws.receive_json(), ws.receive_json()
 
 
 def _with_model(m: FakeModel) -> None:
@@ -525,3 +531,78 @@ def test_city_level_address_is_not_used_as_pickup(store: Store, monkeypatch: pyt
     finally:
         app.dependency_overrides.clear()
     assert "pickup=my_location" in url and "pickup%5Blatitude%5D" not in url
+
+
+
+CARETAKER = AuthedUser(uid="c1", email=None, provider="google.com", role="caretaker")
+
+
+@pytest.fixture
+def two_sockets(store: Store, monkeypatch: pytest.MonkeyPatch) -> Store:
+    def fake_auth(token: str) -> AuthedUser:
+        return {"elder-token": ELDER, "care-token": CARETAKER}[token]
+
+    def fake_load(user: AuthedUser, elder_id: str, **_: Any) -> dict[str, Any]:
+        if elder_id != "e1" or (user.role == "elder" and user.uid != "e1"):
+            raise HTTPException(404)
+        return ELDER_DOC
+
+    monkeypatch.setattr(chat, "authenticate", fake_auth)
+    monkeypatch.setattr(chat, "load_elder", fake_load)
+    return store
+
+
+def test_caretaker_gets_family_thread_only_never_agent_history(two_sockets: Store, model: FakeModel) -> None:
+    two_sockets["e1"].append(Message(sender="elder", text="private chat with the agent"))
+    with TestClient(app).websocket_connect("/ws/e1") as care:
+        care.send_json({"type": "auth", "token": "care-token"})
+        first = care.receive_json()
+        assert first["type"] == "family_history"
+        care.send_json({"type": "message", "text": "pretend to be the elder"})
+        assert care.receive_json()["type"] == "error"
+    assert model.calls == []
+
+
+def test_caretaker_message_reaches_elder_live_with_reply_chips(two_sockets: Store, model: FakeModel) -> None:
+    # One portal (event loop) for both sockets — like a real server; otherwise cross-loop sends hang.
+    with TestClient(app) as c, c.websocket_connect("/ws/e1") as elder, c.websocket_connect("/ws/e1") as care:
+        elder.send_json({"type": "auth", "token": "elder-token"})
+        [elder.receive_json() for _ in range(3)]
+        care.send_json({"type": "auth", "token": "care-token"})
+        care.receive_json()
+        care.send_json({"type": "family_message", "text": "Did you take your medicine?"})
+        got = elder.receive_json()
+        assert got["type"] == "family_message"
+        assert got["message"]["senderName"] == "Emma"
+        # Hindi elder → presets are English-only, so the model suggests replies.
+        assert got["message"]["quickReplies"] == ["अच्छा", "ठीक हूँ", "धन्यवाद"]
+        assert care.receive_json()["type"] == "family_message"  # caretaker sees their own message echoed
+        elder.send_json({"type": "family_reply", "text": "Yes, I took it"})
+        assert care.receive_json()["message"]["sender"] == "elder"
+    assert [m.sender for m in two_sockets.family] == ["caretaker", "elder"]
+
+
+def test_roles_cannot_send_each_others_frame_types(two_sockets: Store, model: FakeModel) -> None:
+    with TestClient(app).websocket_connect("/ws/e1") as elder:
+        elder.send_json({"type": "auth", "token": "elder-token"})
+        [elder.receive_json() for _ in range(3)]
+        elder.send_json({"type": "family_message", "text": "spoofing a caretaker"})
+        assert elder.receive_json()["type"] == "error"
+    assert two_sockets.family == []
+
+
+def test_agent_tool_message_to_family_lands_in_family_thread(two_sockets: Store) -> None:
+    m = FakeModel(tool_calls=[("send_message_to_caretaker", {"message": "I'm fine, don't worry"})])
+    _with_model(m)
+    try:
+        with TestClient(app) as c, c.websocket_connect("/ws/e1") as elder, c.websocket_connect("/ws/e1") as care:
+            elder.send_json({"type": "auth", "token": "elder-token"})
+            [elder.receive_json() for _ in range(3)]
+            care.send_json({"type": "auth", "token": "care-token"})
+            care.receive_json()
+            elder.send_json({"type": "message", "text": "tell Emma I'm fine"})
+            got = care.receive_json()
+    finally:
+        app.dependency_overrides.clear()
+    assert got["type"] == "family_message" and got["message"]["viaAgent"] is True
+    assert got["message"]["text"] == "I'm fine, don't worry"

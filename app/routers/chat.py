@@ -2,7 +2,13 @@
 
 Protocol (JSON frames):
   client -> {"type": "auth", "token": "<Firebase ID token>"}      must be first, within 10s
-  server -> {"type": "history", "messages": [Message, ...]}
+  Elders get the agent thread + family thread. Caretakers get the family thread ONLY
+  (the agent conversation is private unless full_access, and that's read via Firestore rules).
+  server -> {"type": "history", "messages": [Message, ...]}         elders only
+  server -> {"type": "family_history", "messages": [FamilyMessage, ...]}
+  client -> {"type": "family_message", "text": "..."}             caretaker → elder
+  client -> {"type": "family_reply", "text": "..."}               elder → caretakers
+  server -> {"type": "family_message", "message": FamilyMessage}
   server -> {"type": "checkin", "checkin": TodayCheckIn | null}   on connect and after each check-in turn
   client -> {"type": "message", "text": "..."}
   client -> {"type": "start_checkin", "mood": "good" | null}
@@ -26,7 +32,8 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app import checkin_store
 from app.access import load_elder
-from app.agent import live, messages
+from app.agent import family, live, messages
+from app.agent.family import FALLBACK_REPLIES, PRESET_REPLIES, FamilyMessage
 from app.agent.llm import AgentReply, ChatModel, CheckInTurn, Turn, get_chat_model
 from app.agent.narrate import narrate, update_card
 from app.agent.messages import Message
@@ -58,6 +65,11 @@ class TextFrame(BaseModel):
 class StartCheckInFrame(BaseModel):
     type: Literal["start_checkin"]
     mood: Mood | None = None
+
+
+class FamilyFrame(BaseModel):
+    type: Literal["family_message", "family_reply"]
+    text: str = Field(min_length=1, max_length=1000)
 
 
 class ConfirmFrame(BaseModel):
@@ -208,6 +220,36 @@ class Session:
         await self.send({"type": "typing"})
         await self.checkin_turn(c)
 
+    async def _suggest_replies(self, elder: dict[str, Any], sender_name: str, text: str) -> list[str]:
+        preset = PRESET_REPLIES.get(text.strip().lower())
+        if preset and elder.get("language", "en-US") == "en-US":
+            return preset
+        system = build_system_prompt(elder, [], dt.datetime.now(dt.UTC)) + (
+            f"\n\n{sender_name} (their family) just sent them: “{text}”. Suggest 3 short replies THEY might tap "
+            "to answer {sender_name}, in their language, max 5 words, starting with a fitting emoji. "
+            "Put the suggestions in quickReplies; reply can be empty."
+        )
+        try:
+            out = await asyncio.wait_for(
+                self.model.complete(system, [Turn("elder", "(suggest my replies)")], AgentReply), 15)
+            return out.quickReplies or FALLBACK_REPLIES
+        except Exception:  # noqa: BLE001 — suggestions are a nicety; never block the message
+            log.warning("reply suggestions failed for elder %s", self.elder_id)
+            return FALLBACK_REPLIES
+
+    async def on_family(self, text: str) -> None:
+        """Caretaker → elder, or elder → caretakers. Delivered to everyone on the family channel."""
+        if self.user.role == "caretaker":
+            elder = await self._elder()
+            name = await asyncio.to_thread(family.caretaker_name, self.user.uid)
+            msg = FamilyMessage(sender="caretaker", senderUid=self.user.uid, senderName=name, text=text,
+                                quickReplies=await self._suggest_replies(elder, name, text))
+        else:
+            elder = await self._elder()
+            msg = FamilyMessage(sender="elder", senderUid=self.user.uid, senderName=elder.get("name", ""), text=text)
+        await asyncio.to_thread(family.save, self.elder_id, msg)
+        await live.broadcast(self.elder_id, {"type": "family_message", "message": msg.model_dump(mode="json")}, "family")
+
     async def on_text(self, text: str) -> None:
         await self.save_elder_message(text)
         await self.send({"type": "typing"})
@@ -242,18 +284,32 @@ async def chat(ws: WebSocket, elder_id: str, model: Annotated[ChatModel, Depends
     if user is None:
         return
     s = Session(ws, user, elder_id, model)
-    live.register(elder_id, s.send)
+    is_elder = user.role == "elder"
+    live.register(elder_id, s.send, frozenset({"agent", "family"}) if is_elder else frozenset({"family"}))
 
-    history = await asyncio.to_thread(messages.recent, elder_id, HISTORY_ON_CONNECT)
-    await s.send({"type": "history", "messages": [m.model_dump(mode="json") for m in history]})
-    await s.send_checkin_state()
+    if is_elder:
+        history = await asyncio.to_thread(messages.recent, elder_id, HISTORY_ON_CONNECT)
+        await s.send({"type": "history", "messages": [m.model_dump(mode="json") for m in history]})
+    fam = await asyncio.to_thread(family.recent, elder_id, HISTORY_ON_CONNECT)
+    await s.send({"type": "family_history", "messages": [m.model_dump(mode="json") for m in fam]})
+    if is_elder:
+        await s.send_checkin_state()
 
     try:
         while True:
             raw = await ws.receive_json()
             kind = raw.get("type") if isinstance(raw, dict) else None
             try:
-                if kind == "message":
+                if kind in ("family_message", "family_reply"):
+                    frame_f = FamilyFrame.model_validate(raw)
+                    if (frame_f.type == "family_message") != (user.role == "caretaker"):
+                        await s.send({"type": "error", "message": "Wrong message type for your role"})
+                        continue
+                    await s.on_family(frame_f.text.strip())
+                elif not is_elder:
+                    # Caretakers only use the family channel (Act-as-Elder would be a separate, explicit mode).
+                    await s.send({"type": "error", "message": "Caretakers can only send family messages here"})
+                elif kind == "message":
                     frame = TextFrame.model_validate(raw)
                     await s.on_text(frame.text.strip())
                 elif kind == "start_checkin":

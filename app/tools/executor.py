@@ -14,6 +14,8 @@ from zoneinfo import ZoneInfo
 from app import checkin_store
 from app.autonomy import AutonomyRules, decide, format_money
 from app.checkin_store import LogEntry
+from app.agent import family, live
+from app.agent.family import FamilyMessage
 from app.tools import actions, providers
 from app.tools.actions import Action
 from app.tools.geo import geocode, km_between, maps_link, uber_link
@@ -129,8 +131,10 @@ async def perform(a: Action, elder: dict[str, Any]) -> dict[str, Any]:
             await asyncio.to_thread(save_reminder, a.elderId, a.args["title"], a.args["time"], dt.date.fromisoformat(day))
             result = {"status": "done", "reminder": f"{a.args['title']} at {a.args['time']} on {day}"}
         elif a.tool == "send_message_to_caretaker":
-            await asyncio.to_thread(checkin_store.add_log, a.elderId, LogEntry(
-                message=f"Message from {elder.get('name', 'them')}: “{a.args['message']}”", kind="ok", actor="elder"))
+            msg = FamilyMessage(sender="elder", senderUid=a.elderId, senderName=elder.get("name", ""),
+                                text=a.args["message"], viaAgent=True)
+            await asyncio.to_thread(family.save, a.elderId, msg)
+            await live.broadcast(a.elderId, {"type": "family_message", "message": msg.model_dump(mode="json")}, "family")
             result = {"status": "done", "delivered": True}
         else:
             raise ValueError(f"no executor for {a.tool}")
