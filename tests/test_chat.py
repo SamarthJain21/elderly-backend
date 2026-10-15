@@ -64,6 +64,7 @@ class FakeModel:
 
 
 class Store(dict[str, list[Message]]):
+    alerts: list[Any]
     reminders: list[tuple[str, str, Any]]
     people: list[Any]
     requests: dict[str, Any]
@@ -120,6 +121,10 @@ def store(monkeypatch: pytest.MonkeyPatch) -> Store:
     monkeypatch.setattr(chat.contacts, "list_contacts", lambda _eid: list(db.people))
     monkeypatch.setattr(chat.contacts, "save_request", lambda _eid, r: db.requests.__setitem__(r.id, r))
     monkeypatch.setattr(executor, "send_sms", lambda to, body: db.texts.append((to, body)) or "log")
+    # Emergencies go through app.alerts — keep them in memory too (never the real Firestore).
+    db.alerts = []
+    monkeypatch.setattr(chat.alerts_mod, "save", lambda a: db.alerts.append(a))
+    monkeypatch.setattr(chat.alerts_mod, "send_sms", lambda to, body: db.texts.append((to, body)) or "log")
 
     def fake_auth(token: str) -> AuthedUser:
         if token != "elder-token":
@@ -475,6 +480,7 @@ def test_emergency_always_alerts_even_if_everything_blocked(store: Store) -> Non
     finally:
         app.dependency_overrides.clear()
     assert m.tool_results[0]["status"] == "family_alerted" and m.tool_results[0]["emergencyNumber"] == "112"
+    assert store.alerts and store.alerts[0].source == "agent"  # same path as the SOS button
     assert store.logs[-1].kind == "alert" and "fell in the bathroom" in store.logs[-1].message
 
 

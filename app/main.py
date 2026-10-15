@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import approvals, chat, checkins, elders, me, people, reminders, settings
+from app.routers import alerts_api, approvals, chat, checkins, elders, me, people, reminders, settings
 
 app = FastAPI(title="Elderly API")
 
@@ -24,6 +24,7 @@ app.include_router(checkins.router)
 app.include_router(settings.router)
 app.include_router(approvals.router)
 app.include_router(people.router)
+app.include_router(alerts_api.router)
 
 
 @app.get("/health")

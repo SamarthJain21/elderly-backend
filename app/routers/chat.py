@@ -30,6 +30,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, ValidationError
 
+from app import alerts as alerts_mod  # tests swap its storage
 from app import checkin_store, contacts
 from app.access import load_elder
 from app.agent import family, live, messages

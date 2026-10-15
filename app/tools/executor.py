@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app import checkin_store, contacts
+from app import alerts, checkin_store, contacts
+from app.alerts import EMERGENCY_NUMBER
 from app.autonomy import AutonomyRules, decide, format_money
 from app.contacts import Contact, HelpRequest, find_contact, pick_volunteer
 from app.sms import send_sms
@@ -23,8 +24,6 @@ from app.tools.actions import Action
 from app.tools.geo import geocode, km_between, maps_link, uber_link
 from app.tools.weather import get_weather
 
-# Emergency numbers by country (via timezone). Shown to the elder, never dialled automatically.
-EMERGENCY_NUMBER = {"Asia/Kolkata": "112", "Asia/Bangkok": "1669", "Asia/Singapore": "995"}
 
 # Gemini function declarations (JSON Schema). `reply` is how the model talks; it must always call something.
 REPLY_TOOL = {
@@ -319,7 +318,8 @@ async def run_tool(ctx: ToolContext, name: str, args: dict[str, Any]) -> dict[st
             return {"status": "unavailable", "instruction": "Say you couldn't check the weather just now."}
     if name == "escalate_emergency":
         desc = str(args.get("description", "Emergency"))[:300]
-        await _log(ctx, f"🚨 EMERGENCY — {ctx.name}: {desc}", "alert")
+        # Same path as the SOS button: alert record, caretaker banners, texts to emergency contacts.
+        await alerts.raise_alert(ctx.elder_id, ctx.elder, "agent", desc)
         return {"status": "family_alerted", "emergencyNumber": EMERGENCY_NUMBER.get(ctx.tz, "112"),
                 "instruction": "Stay calm and kind. Tell them family has been alerted. If it's serious, tell them to call "
                                "the emergency number now or press the red SOS button. Ask if they are safe right now."}
