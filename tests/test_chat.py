@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+
 import datetime as dt
 from typing import Any
 
@@ -62,6 +64,7 @@ class FakeModel:
 
 
 class Store(dict[str, list[Message]]):
+    reminders: list[tuple[str, str, Any]]
     people: list[Any]
     requests: dict[str, Any]
     texts: list[tuple[str, str]]
@@ -95,6 +98,20 @@ def store(monkeypatch: pytest.MonkeyPatch) -> Store:
     monkeypatch.setattr(chat.family, "save", lambda _eid, m: db.family.append(m))
     monkeypatch.setattr(chat.family, "recent", lambda _eid, n: db.family[-n:])
     monkeypatch.setattr(chat.family, "caretaker_name", lambda uid: "Emma")
+    # Return copies, like Firestore does — mutating a shared object would hide double-marking bugs.
+    monkeypatch.setattr(chat.family, "get", lambda _eid, mid: next((m.model_copy(deep=True) for m in db.family if m.id == mid), None))
+
+    def mark_used(_eid: str, mid: str, idx: int) -> bool:
+        for m in db.family:
+            if m.id == mid:
+                if idx in m.usedChips:
+                    return False
+                m.usedChips.append(idx)
+                return True
+        return False
+    monkeypatch.setattr(chat.family, "mark_used", mark_used)
+    db.reminders = []
+    monkeypatch.setattr(chat, "save_reminder", lambda eid, title, time, day: db.reminders.append((title, time, day)))
 
     async def fake_geocode(q: str, tz: Any = None, near: Any = None) -> Place | None:
         return None if "nowhere" in q else Place(lat=18.53, lng=73.88, name=f"{q} (OSM)")
@@ -581,8 +598,8 @@ def test_caretaker_message_reaches_elder_live_with_reply_chips(two_sockets: Stor
         got = elder.receive_json()
         assert got["type"] == "family_message"
         assert got["message"]["senderName"] == "Emma"
-        # Hindi elder → presets are English-only, so the model suggests replies.
-        assert got["message"]["quickReplies"] == ["अच्छा", "ठीक हूँ", "धन्यवाद"]
+        # Hindi elder → presets are English-only; the fake model suggests nothing, so fallback chips.
+        assert [c["label"] for c in got["message"]["chips"]] == ["👍 Okay", "❤️ Love you", "⏰ Remind me later"]
         assert care.receive_json()["type"] == "family_message"  # caretaker sees their own message echoed
         elder.send_json({"type": "family_reply", "text": "Yes, I took it"})
         assert care.receive_json()["message"]["sender"] == "elder"
@@ -736,3 +753,47 @@ def test_prompt_forbids_converting_currencies() -> None:
     from app.agent.prompt import build_system_prompt
     p = build_system_prompt({**ELDER_DOC, "language": "th-TH"}, [], dt.datetime(2026, 10, 15, tzinfo=dt.UTC))
     assert "Never convert, translate or rename a currency" in p
+
+
+
+@contextlib.contextmanager
+def _family_pair() -> Any:
+    """Elder + caretaker sockets on one event loop; always closed, even when an assertion fails."""
+    with TestClient(app) as c, c.websocket_connect("/ws/e1") as elder, c.websocket_connect("/ws/e1") as care:
+        elder.send_json({"type": "auth", "token": "elder-token"})
+        [elder.receive_json() for _ in range(3)]
+        care.send_json({"type": "auth", "token": "care-token"})
+        care.receive_json()
+        yield elder, care
+
+
+def test_english_elder_gets_remind_me_chip_and_tapping_it_sets_a_reminder(two_sockets: Store, model: FakeModel, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(ELDER_DOC, "language", "en-US")
+    with _family_pair() as (elder, care):
+        care.send_json({"type": "family_message", "text": "Did you take your medicine?"})
+        m = elder.receive_json()["message"]
+        care.receive_json()
+        assert [ch["label"] for ch in m["chips"]] == ["✅ Yes, I took it", "❌ Not yet", "⏰ Remind me in 30 min"]
+        elder.send_json({"type": "family_action", "messageId": m["id"], "chip": 2})
+        upd, note = elder.receive_json(), elder.receive_json()
+        assert upd["type"] == "family_update" and upd["message"]["usedChips"] == [2]
+        assert note["message"]["sender"] == "system" and "Reminder set for" in note["message"]["text"]
+        elder.send_json({"type": "family_action", "messageId": m["id"], "chip": 2})
+        assert elder.receive_json()["type"] == "error"  # can't run twice
+    assert two_sockets.reminders[0][0] == "Take your medicine"
+
+
+def test_not_yet_gives_caretaker_actions_and_only_caretaker_can_run_them(two_sockets: Store, model: FakeModel, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(ELDER_DOC, "phone", "+91 90000 11111")
+    with _family_pair() as (elder, care):
+        elder.send_json({"type": "family_reply", "text": "❌ Not yet"})
+        m = care.receive_json()["message"]
+        elder.receive_json()
+        labels = [ch["label"] for ch in m["chips"]]
+        assert labels[0].startswith("⏰ Remind Rose") and labels[-1] == "📞 Call Rose"
+        assert m["chips"][-1]["action"]["phone"] == "+91 90000 11111"
+        elder.send_json({"type": "family_action", "messageId": m["id"], "chip": 0})
+        assert elder.receive_json()["type"] == "error"  # chips on the elder's own message are for the family
+        care.send_json({"type": "family_action", "messageId": m["id"], "chip": 0})
+        assert care.receive_json()["type"] == "family_update"
+    assert two_sockets.reminders and two_sockets.reminders[0][0] == "Take your medicine"

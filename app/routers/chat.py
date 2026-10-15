@@ -33,7 +33,17 @@ from pydantic import BaseModel, Field, ValidationError
 from app import checkin_store, contacts
 from app.access import load_elder
 from app.agent import family, live, messages
-from app.agent.family import FALLBACK_REPLIES, PRESET_REPLIES, FamilyMessage
+from app.agent.chips import (
+    FALLBACK_FOR_CARETAKER,
+    FALLBACK_FOR_ELDER,
+    Chip,
+    ChipIdea,
+    RemindAction,
+    caretaker_presets,
+    chips_from_ideas,
+    elder_presets,
+)
+from app.agent.family import FamilyMessage
 from app.agent.llm import AgentReply, ChatModel, CheckInTurn, Turn, get_chat_model
 from app.agent.narrate import narrate, update_card
 from app.agent.messages import Message
@@ -41,7 +51,7 @@ from app.agent.prompt import build_checkin_prompt, build_system_prompt
 from app.auth import AuthedUser, authenticate
 from app.checkin import MAX_TURNS, MOOD_LABEL, CheckIn, Mood, assess, checkin_id, merge, next_missing
 from app.checkin_store import LogEntry, TodayCheckIn
-from app.routers.reminders import all_reminders
+from app.routers.reminders import all_reminders, save_reminder
 from app.routers.settings import load_rules
 from app.schedule import Reminder, local_today, reminders_for_day
 from app.tools import actions
@@ -65,6 +75,18 @@ class TextFrame(BaseModel):
 class StartCheckInFrame(BaseModel):
     type: Literal["start_checkin"]
     mood: Mood | None = None
+
+
+class ChipIdeas(AgentReply):
+    reply: str = ""
+    quickReplies: list[str] = Field(default_factory=list)
+    ideas: list[ChipIdea] = Field(default_factory=list)
+
+
+class FamilyActionFrame(BaseModel):
+    type: Literal["family_action"]
+    messageId: str
+    chip: int
 
 
 class FamilyFrame(BaseModel):
@@ -225,35 +247,90 @@ class Session:
         await self.send({"type": "typing"})
         await self.checkin_turn(c)
 
-    async def _suggest_replies(self, elder: dict[str, Any], sender_name: str, text: str) -> list[str]:
-        preset = PRESET_REPLIES.get(text.strip().lower())
-        if preset and elder.get("language", "en-US") == "en-US":
+    async def _make_chips(self, elder: dict[str, Any], from_caretaker: bool, sender_name: str, text: str) -> list[Chip]:
+        """Chips for whoever receives this family message. Presets first; else the model suggests, code validates."""
+        elder_first = (elder.get("name") or "them").split()[0]
+        if from_caretaker:
+            # Elder can call the sender back only if the family added them to Contacts with a number.
+            people = await asyncio.to_thread(contacts.list_contacts, self.elder_id)
+            sender_contact = contacts.find_contact(people, sender_name)
+            call_name, call_phone = (sender_contact.name, sender_contact.phone) if sender_contact else (None, None)
+            preset = elder_presets(text, sender_name, call_phone) if elder.get("language", "en-US") == "en-US" else None
+        else:
+            call_name, call_phone = elder_first, elder.get("phone") or None
+            preset = caretaker_presets(text, elder_first, call_phone)
+        if preset:
             return preset
-        system = build_system_prompt(elder, [], dt.datetime.now(dt.UTC)) + (
-            f"\n\n{sender_name} (their family) just sent them: “{text}”. Suggest 3 short replies THEY might tap "
-            "to answer {sender_name}, in their language, max 5 words, starting with a fitting emoji. "
-            "Put the suggestions in quickReplies; reply can be empty."
-        )
+
+        if from_caretaker:
+            ask = (f"{sender_name} (their family) sent them: “{text}”. Suggest 3 replies THEY might tap, in their "
+                   "language. Use kind 'remind' when a reminder would genuinely help (e.g. 'Remind me in 30 min'), "
+                   f"'call' to phone {sender_name}{'' if call_phone else ' (not available — do not use call)'}, else 'message'.")
+        else:
+            ask = (f"{elder.get('name', 'The elder')} told their family: “{text}”. Suggest 3 next steps for the family "
+                   f"member, in English: 'message' (label is the text sent to {elder_first}), 'remind' (sets a reminder "
+                   f"for {elder_first}), or 'call' (phone {elder_first}). Be warm and practical.")
+        system = build_system_prompt(elder, [], dt.datetime.now(dt.UTC)) + "\n\n" + ask + (
+            " Rules: if the message mentions an appointment, a time or a task, one idea MUST be kind 'remind' with "
+            "remindAt (HH:MM, 24h) about an hour before — plus remindDate (YYYY-MM-DD) if it isn't today — or "
+            "remindInMinutes for 'later'. Today in their timezone is " + local_today(elder.get("timezone") or "Asia/Kolkata").isoformat() + ". Only the three kinds exist — "
+            "never suggest anything else that sounds like an action (no notes, lists, bookings, orders). Labels: max 5 "
+            "words, start with an emoji. Put them in `ideas`; reply and quickReplies can be empty.")
         try:
-            out = await asyncio.wait_for(
-                self.model.complete(system, [Turn("elder", "(suggest my replies)")], AgentReply), 15)
-            return out.quickReplies or FALLBACK_REPLIES
-        except Exception:  # noqa: BLE001 — suggestions are a nicety; never block the message
-            log.warning("reply suggestions failed for elder %s", self.elder_id)
-            return FALLBACK_REPLIES
+            out = await asyncio.wait_for(self.model.complete(system, [Turn("elder", "(suggest)")], ChipIdeas), 15)
+            chips = chips_from_ideas(out.ideas, call_name, call_phone)
+        except Exception:  # noqa: BLE001 — chips are a nicety; never block the message
+            log.warning("chip suggestions failed for elder %s", self.elder_id)
+            chips = []
+        return chips or (FALLBACK_FOR_ELDER if from_caretaker else FALLBACK_FOR_CARETAKER)
 
     async def on_family(self, text: str) -> None:
         """Caretaker → elder, or elder → caretakers. Delivered to everyone on the family channel."""
+        elder = await self._elder()
         if self.user.role == "caretaker":
-            elder = await self._elder()
             name = await asyncio.to_thread(family.caretaker_name, self.user.uid)
             msg = FamilyMessage(sender="caretaker", senderUid=self.user.uid, senderName=name, text=text,
-                                quickReplies=await self._suggest_replies(elder, name, text))
+                                chips=await self._make_chips(elder, True, name, text))
         else:
-            elder = await self._elder()
-            msg = FamilyMessage(sender="elder", senderUid=self.user.uid, senderName=elder.get("name", ""), text=text)
+            msg = FamilyMessage(sender="elder", senderUid=self.user.uid, senderName=elder.get("name", ""), text=text,
+                                chips=await self._make_chips(elder, False, elder.get("name", ""), text))
         await asyncio.to_thread(family.save, self.elder_id, msg)
         await live.broadcast(self.elder_id, {"type": "family_message", "message": msg.model_dump(mode="json")}, "family")
+
+    async def on_family_action(self, message_id: str, chip_index: int) -> None:
+        """Carry out an action chip. Checked: right message, right recipient, not used, a known action."""
+        msg = await asyncio.to_thread(family.get, self.elder_id, message_id)
+        recipient = {"caretaker": "elder", "elder": "caretaker"}.get(msg.sender) if msg else None
+        if msg is None or recipient != self.user.role or not 0 <= chip_index < len(msg.chips):
+            await self.send({"type": "error", "message": "That option isn't available."})
+            return
+        chip = msg.chips[chip_index]
+        if chip_index in msg.usedChips:
+            await self.send({"type": "error", "message": "That's already been done."})
+            return
+        if not isinstance(chip.action, RemindAction):
+            # Messages are sent as normal text; calls are a tap-to-call link on the device.
+            await self.send({"type": "error", "message": "Nothing to run for that option."})
+            return
+        # Claim first, act second: a double tap (or two caretakers at once) can't set two reminders.
+        if not await asyncio.to_thread(family.mark_used, self.elder_id, message_id, chip_index):
+            await self.send({"type": "error", "message": "That's already been done."})
+            return
+        elder = await self._elder()
+        try:
+            day, time_hhmm = chip.action.when(elder.get("timezone") or "Asia/Kolkata", dt.datetime.now(dt.UTC))
+        except ValueError:
+            await self.send({"type": "error", "message": "That time has already passed."})
+            return
+        await asyncio.to_thread(save_reminder, self.elder_id, chip.action.title, time_hhmm, day)
+        who = "you" if self.user.role == "elder" else (await asyncio.to_thread(family.caretaker_name, self.user.uid))
+        when_label = time_hhmm if day == local_today(elder.get("timezone") or "Asia/Kolkata") else f"{time_hhmm} tomorrow"
+        note = FamilyMessage(sender="system", senderUid=self.user.uid, senderName="Elderly",
+                             text=f"⏰ Reminder set for {when_label} — {chip.action.title} (by {who})")
+        await asyncio.to_thread(family.save, self.elder_id, note)
+        updated = msg.model_copy(update={"usedChips": sorted({*msg.usedChips, chip_index})})
+        await live.broadcast(self.elder_id, {"type": "family_update", "message": updated.model_dump(mode="json")}, "family")
+        await live.broadcast(self.elder_id, {"type": "family_message", "message": note.model_dump(mode="json")}, "family")
 
     async def on_text(self, text: str) -> None:
         await self.save_elder_message(text)
@@ -312,7 +389,10 @@ async def chat(ws: WebSocket, elder_id: str, model: Annotated[ChatModel, Depends
             raw = await ws.receive_json()
             kind = raw.get("type") if isinstance(raw, dict) else None
             try:
-                if kind in ("family_message", "family_reply"):
+                if kind == "family_action":
+                    frame_a = FamilyActionFrame.model_validate(raw)
+                    await s.on_family_action(frame_a.messageId, frame_a.chip)
+                elif kind in ("family_message", "family_reply"):
                     frame_f = FamilyFrame.model_validate(raw)
                     if (frame_f.type == "family_message") != (user.role == "caretaker"):
                         await s.send({"type": "error", "message": "Wrong message type for your role"})
