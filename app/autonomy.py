@@ -88,10 +88,14 @@ def decide(tool: str, rules: AutonomyRules, cost_minor: int | None = None) -> De
     }[rule.mode]
 
 
-_SYMBOL: dict[str, str] = {"INR": "₹", "THB": "฿", "SGD": "S$"}
+# ISO 4217 minor-unit exponents (same values dinero.js uses on the frontend). Amounts everywhere are
+# integers in the minor unit: paise/satang/cents for exponent 2, whole yen/won for exponent 0.
+CURRENCY_EXPONENT: dict[str, int] = {"INR": 2, "THB": 2, "SGD": 2, "JPY": 0, "KRW": 0}
+_SYMBOL: dict[str, str] = {"INR": "₹", "THB": "฿", "SGD": "S$", "JPY": "¥", "KRW": "₩"}
 
 
 def format_money(minor: int, currency: str) -> str:
-    """Display only. Integer math — no floats anywhere near money."""
-    whole, frac = divmod(minor, 100)
-    return f"{_SYMBOL.get(currency, currency + ' ')}{whole:,}" + (f".{frac:02d}" if frac else "")
+    """Display only. Integer math — no floats anywhere near money. Unknown currency → error, not a guess."""
+    exp = CURRENCY_EXPONENT[currency]
+    whole, frac = divmod(minor, 10**exp) if exp else (minor, 0)
+    return f"{_SYMBOL.get(currency, currency + ' ')}{whole:,}" + (f".{frac:0{exp}d}" if frac else "")

@@ -86,3 +86,20 @@ def test_spending_tool_without_a_quote_fails_safe() -> None:
 
 def test_unknown_tool_fails_safe() -> None:
     assert decide("transfer_money", default_rules("INR")) == "caretaker_approve"
+
+
+from app.autonomy import format_money  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("minor", "cur", "shown"),
+    [(18_000, "INR", "₹180"), (1_234_567, "INR", "₹12,345.67"), (4_850, "THB", "฿48.50"), (5, "SGD", "S$0.05"),
+     (1_500, "JPY", "¥1,500"), (10_000, "KRW", "₩10,000")],
+)
+def test_format_money_respects_each_currencys_minor_unit(minor: int, cur: str, shown: str) -> None:
+    assert format_money(minor, cur) == shown
+
+
+def test_format_money_rejects_unknown_currency() -> None:
+    with pytest.raises(KeyError):
+        format_money(100, "XYZ")
