@@ -69,19 +69,50 @@ def _is_capacity_error(exc: Exception) -> bool:
 # An overloaded model sometimes doesn't error — it just hangs. Cap each call so the next model gets a turn
 # well inside the caller's overall budget (chat turns allow ~45s in total).
 PER_CALL_TIMEOUT_S = 12.0  # worst tool turn: 3 calls ≈ 36s, inside the 45s turn budget
+# Hedging: Flash-Lite normally answers in ~0.8s, but now and then a request stalls for 10s+. If there's no answer
+# after this long, send the identical request again and take whichever finishes first.
+HEDGE_AFTER_S = 3.0
 
 
 class GeminiChatModel:
-    def __init__(self, client: genai.Client, models: list[str], per_call_timeout_s: float = PER_CALL_TIMEOUT_S) -> None:
+    def __init__(self, client: genai.Client, models: list[str], per_call_timeout_s: float = PER_CALL_TIMEOUT_S,
+                 hedge_after_s: float | None = HEDGE_AFTER_S) -> None:
         if not models:
             raise ValueError("at least one model required")
         self._client = client
         self._models = models
         self._timeout = per_call_timeout_s
+        self._hedge_after = hedge_after_s
 
     async def _call(self, model: str, contents: list[types.Content], config: types.GenerateContentConfig) -> types.GenerateContentResponse:
-        return await asyncio.wait_for(
-            self._client.aio.models.generate_content(model=model, contents=contents, config=config), self._timeout)
+        return await asyncio.wait_for(self._hedged(model, contents, config), self._timeout)
+
+    async def _hedged(self, model: str, contents: list[types.Content], config: types.GenerateContentConfig) -> types.GenerateContentResponse:
+        """First answer wins. A second identical request starts only if the first hasn't answered in time."""
+        def start() -> asyncio.Task[types.GenerateContentResponse]:
+            return asyncio.create_task(self._client.aio.models.generate_content(model=model, contents=contents, config=config))
+
+        tasks = [start()]
+        try:
+            if self._hedge_after is not None:
+                done, _ = await asyncio.wait(tasks, timeout=self._hedge_after)
+                if not done:
+                    log.info("Gemini %s slow (>%.1fs); hedging with a second request", model, self._hedge_after)
+                    tasks.append(start())
+            last_error: BaseException | None = None
+            pending = set(tasks)
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for t in done:
+                    if t.exception() is None:
+                        return t.result()
+                    last_error = t.exception()
+            assert last_error is not None
+            raise last_error
+        finally:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
 
     def _fallback_or_raise(self, i: int, model: str, exc: Exception) -> None:
         if not _is_capacity_error(exc) or i == len(self._models) - 1:

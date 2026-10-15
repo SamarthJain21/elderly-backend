@@ -41,11 +41,22 @@ def geocode_sync(query: str, tz: str | None = None, near: tuple[float, float] | 
     return _parse(r.json())
 
 
+# Places don't move: cache lookups (also keeps us well inside Nominatim's ~1 request/second policy).
+_places: dict[tuple[str, str | None, tuple[float, float] | None], Place | None] = {}
+
+
 async def geocode(query: str, tz: str | None = None, near: tuple[float, float] | None = None) -> Place | None:
+    key = (query.strip().lower(), tz, (round(near[0], 2), round(near[1], 2)) if near else None)
+    if key in _places:
+        return _places[key]
     async with httpx.AsyncClient(timeout=10, headers=_HEADERS) as c:
         r = await c.get(_NOMINATIM, params=_params(query, tz, near))
         r.raise_for_status()
-        return _parse(r.json())
+        place = _parse(r.json())
+    if len(_places) > 2000:
+        _places.clear()
+    _places[key] = place
+    return place
 
 
 def km_between(a: tuple[float, float], b: tuple[float, float]) -> float:
