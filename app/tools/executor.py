@@ -219,6 +219,8 @@ async def _gated(ctx: ToolContext, tool: str, args: dict[str, Any], quote: provi
         a.status = "awaiting_elder"
         await _save(a)
         return {"status": "awaiting_elder_confirmation", "details": a.summary(), "say": f"{a.summary()}. Shall I go ahead?",
+                "price": format_money(quote.amountMinor, quote.currency) if quote else None,
+                "currency": quote.currency if quote else None,
                 "instruction": "Tell them what you'd order/do and the price, and ask them to tap Yes or No on the card."}
     if decision == "caretaker_approve":
         a.status = "awaiting_caretaker"

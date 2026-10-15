@@ -730,3 +730,9 @@ def test_client_leaving_before_auth_is_not_an_error(store: Any, model: FakeModel
     with TestClient(app).websocket_connect("/ws/e1"):
         pass  # close immediately, like React's dev double-mount
     assert not [r for r in caplog.records if r.levelname == "ERROR"]
+
+
+def test_prompt_forbids_converting_currencies() -> None:
+    from app.agent.prompt import build_system_prompt
+    p = build_system_prompt({**ELDER_DOC, "language": "th-TH"}, [], dt.datetime(2026, 10, 15, tzinfo=dt.UTC))
+    assert "Never convert, translate or rename a currency" in p

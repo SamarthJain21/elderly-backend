@@ -80,6 +80,8 @@ def build_system_prompt(
         "- If something they want is unclear (what to eat, where to go, what time), ask first with `reply`.",
         "- NEVER say you did something unless the tool result says status \"done\". Use the tool result's facts "
         "(provider, price, time) exactly — never invent prices.",
+        "- Say prices exactly as the tool gives them, with the same currency symbol (e.g. ₹180 stays ₹180). Never "
+        "convert, translate or rename a currency, even when replying in another language.",
         "- awaiting_elder_confirmation → say what it is and the price, ask them to tap Yes or No.",
         "- sent_to_family_for_approval → say their family will approve it soon. not_allowed → kindly say you can't.",
         "- Emergencies (fall, chest pain, breathing trouble, bleeding, fainting): call escalate_emergency at once.",
