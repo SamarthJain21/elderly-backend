@@ -268,6 +268,13 @@ class Session:
 async def _authenticate(ws: WebSocket, elder_id: str) -> AuthedUser | None:
     try:
         first: Any = await asyncio.wait_for(ws.receive_json(), AUTH_TIMEOUT_S)
+    except WebSocketDisconnect:
+        # Client left before signing in (React dev double-mount, tab backgrounded, network switch). Normal.
+        return None
+    except (TimeoutError, ValueError):
+        await ws.close(code=4401, reason="Not authenticated")
+        return None
+    try:
         if not isinstance(first, dict) or first.get("type") != "auth" or not isinstance(first.get("token"), str):
             raise HTTPException(401)
         user = await asyncio.to_thread(authenticate, first["token"])
@@ -292,15 +299,15 @@ async def chat(ws: WebSocket, elder_id: str, model: Annotated[ChatModel, Depends
     is_elder = user.role == "elder"
     live.register(elder_id, s.send, frozenset({"agent", "family"}) if is_elder else frozenset({"family"}))
 
-    if is_elder:
-        history = await asyncio.to_thread(messages.recent, elder_id, HISTORY_ON_CONNECT)
-        await s.send({"type": "history", "messages": [m.model_dump(mode="json") for m in history]})
-    fam = await asyncio.to_thread(family.recent, elder_id, HISTORY_ON_CONNECT)
-    await s.send({"type": "family_history", "messages": [m.model_dump(mode="json") for m in fam]})
-    if is_elder:
-        await s.send_checkin_state()
-
     try:
+        if is_elder:
+            history = await asyncio.to_thread(messages.recent, elder_id, HISTORY_ON_CONNECT)
+            await s.send({"type": "history", "messages": [m.model_dump(mode="json") for m in history]})
+        fam = await asyncio.to_thread(family.recent, elder_id, HISTORY_ON_CONNECT)
+        await s.send({"type": "family_history", "messages": [m.model_dump(mode="json") for m in fam]})
+        if is_elder:
+            await s.send_checkin_state()
+
         while True:
             raw = await ws.receive_json()
             kind = raw.get("type") if isinstance(raw, dict) else None

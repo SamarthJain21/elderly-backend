@@ -724,3 +724,9 @@ async def test_hung_last_model_raises_timeout() -> None:
 
     with pytest.raises(TimeoutError):
         await GeminiChatModel(_client(Hang({})), ["only"], per_call_timeout_s=0.05).complete("sys", [Turn("elder", "hi")], AgentReply)
+
+
+def test_client_leaving_before_auth_is_not_an_error(store: Any, model: FakeModel, caplog: pytest.LogCaptureFixture) -> None:
+    with TestClient(app).websocket_connect("/ws/e1"):
+        pass  # close immediately, like React's dev double-mount
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
