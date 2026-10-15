@@ -7,7 +7,8 @@ set -euo pipefail
 PROJECT=elderly-3e18c
 REGION=asia-southeast1
 SERVICE=elderly-api
-SA="${SERVICE}@${PROJECT}.iam.gserviceaccount.com"
+SA="${SERVICE}@${PROJECT}.iam.gserviceaccount.com"        # runs the API
+BUILD_SA="elderly-build@${PROJECT}.iam.gserviceaccount.com"  # builds the image (new projects' default can't)
 ORIGINS='["https://elderly-3e18c.web.app","https://elderly-3e18c.firebaseapp.com","http://localhost:5173"]'
 
 gcloud config set project "$PROJECT" >/dev/null
@@ -17,11 +18,18 @@ gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregi
   aiplatform.googleapis.com firestore.googleapis.com identitytoolkit.googleapis.com --quiet
 if ! gcloud iam service-accounts describe "$SA" >/dev/null 2>&1; then
   gcloud iam service-accounts create "$SERVICE" --display-name "Elderly API (Cloud Run)"
+  sleep 15  # new service accounts take a moment before IAM can see them
 fi
 for role in roles/datastore.user roles/firebaseauth.admin roles/aiplatform.user; do
   gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" --role "$role" \
     --condition=None --quiet >/dev/null
 done
+if ! gcloud iam service-accounts describe "$BUILD_SA" >/dev/null 2>&1; then
+  gcloud iam service-accounts create elderly-build --display-name "Elderly API build (Cloud Build)"
+  sleep 15  # new service accounts take a moment before IAM can see them
+fi
+gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$BUILD_SA" --role roles/run.builder \
+  --condition=None --quiet >/dev/null
 
 # --max-instances 1: live chat pushes are held in one process (see FOUND-ISSUES).
 # --timeout 3600 + session affinity: long-lived WebSockets stay on that instance.
@@ -30,6 +38,7 @@ gcloud run deploy "$SERVICE" \
   --source . \
   --region "$REGION" \
   --service-account "$SA" \
+  --build-service-account "projects/${PROJECT}/serviceAccounts/${BUILD_SA}" \
   --allow-unauthenticated \
   --min-instances 0 --max-instances 1 \
   --timeout 3600 --session-affinity \
