@@ -96,6 +96,8 @@ class ElderProfile(BaseModel):
     language: Language
     sharingTier: str
     assessment: Assessment | None
+    # Names only (no emails/phones) so the elder's app can say "Samarth set this up for you".
+    caretakerNames: list[str] = []
 
 
 def _assessment_from(elder: dict[str, Any], rules: dict[str, Any]) -> Assessment | None:
@@ -132,7 +134,10 @@ def list_my_elders(caretaker: Caretaker) -> list[ElderSummary]:
 @router.get("/{elder_id}")
 def get_elder(elder_id: str, user: CurrentUser) -> ElderProfile:
     elder = load_elder(user, elder_id)
-    rules_snap = firebase.get_db().collection("rules").document(elder_id).get()
+    db = firebase.get_db()
+    rules_snap = db.collection("rules").document(elder_id).get()
+    refs = [db.collection("caretakers").document(uid) for uid in elder.get("caretakerIds", [])]
+    names = [str((snap.to_dict() or {}).get("name") or "") for snap in db.get_all(refs) if snap.exists] if refs else []
     return ElderProfile(
         elderId=elder_id,
         name=elder["name"],
@@ -140,6 +145,7 @@ def get_elder(elder_id: str, user: CurrentUser) -> ElderProfile:
         language=elder["language"],
         sharingTier=elder.get("sharingTier", "daily_summary"),
         assessment=_assessment_from(elder, rules_snap.to_dict() or {}),
+        caretakerNames=[n for n in names if n],
     )
 
 
