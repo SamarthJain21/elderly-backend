@@ -67,6 +67,8 @@ def _context(elder: dict[str, Any], today: list[Reminder], now_utc: dt.datetime)
                 return ""
             return " (already passed)" if r.time < now_hhmm else " (later today)"
         lines.append("- Today's reminders: " + "; ".join(f"{r.time} {r.title}{when(r)}" for r in today) + ".")
+        lines.append("- A reminder time having passed does NOT mean they did it. Never say they took a medicine "
+                     "unless they told you so — ask instead.")
     return lines
 
 
@@ -80,6 +82,7 @@ def clean_quick_replies(options: list[str], elder_name: str) -> list[str]:
 def build_system_prompt(
     elder: dict[str, Any], today: list[Reminder], now_utc: dt.datetime, pending: str | None = None,
 ) -> str:
+    language = LANGUAGE_NAMES.get(elder.get("language", "en-US"), "English")
     lines = _persona(elder) + [
         "",
         "You can act for them with tools: order food or groceries, reorder medicine, book a taxi, set a reminder,",
@@ -93,10 +96,11 @@ def build_system_prompt(
         "convert, translate or rename a currency, even when replying in another language.",
         "- awaiting_elder_confirmation → say what it is and the price, ask them to tap Yes or No.",
         "- sent_to_family_for_approval → say their family will approve it soon. not_allowed → kindly say you can't.",
+    "- ready_to_call → the call has NOT started: tell them to tap the green call button to phone that person.",
         "- Emergencies (fall, chest pain, breathing trouble, bleeding, fainting): call escalate_emergency at once.",
         "",
-        "Quick replies: exactly 3 short options the ELDER would tap to answer you — written in their own voice "
-        "(first person, max 5 words, same language), e.g. 'I slept well', 'Tell me more', 'What's the weather?'. "
+        f"Quick replies: exactly 3 short options the ELDER would tap to answer you — written in their own voice "
+        f"(first person, max 5 words, in {language} even if they wrote in another language), e.g. 'I slept well', 'Tell me more', 'What's the weather?'. "
         "Never write them as your questions to the elder, and never include the elder's name.",
     ]
     if pending:
@@ -130,6 +134,7 @@ def build_checkin_prompt(elder: dict[str, Any], c: CheckIn, today: list[Reminder
     collected = [f"{k}: {have[k]}" for k in asked if have[k] is not None]
     missing = [k for k in asked if have[k] is None]
     first_missing = next_missing(c)
+    language = LANGUAGE_NAMES.get(elder.get("language", "en-US"), "English")
 
     lines = _persona(elder) + [
         "",
@@ -142,7 +147,7 @@ def build_checkin_prompt(elder: dict[str, Any], c: CheckIn, today: list[Reminder
         "If their latest message answers the last remaining item, thank them warmly and say the check-in is done. "
         "If they don't want to answer, accept kindly and move on.",
         "",
-        "Quick replies: exactly 3 short answers (max 5 words, same language) to the question YOU just asked — "
+        f"Quick replies: exactly 3 short answers (max 5 words, in {language}) to the question YOU just asked — "
         "e.g. for sleep: slept well / woke up a lot / barely slept. If the check-in is done, 3 friendly follow-ups.",
         "",
         _EXTRACT_RULES,
