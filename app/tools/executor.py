@@ -35,7 +35,7 @@ REPLY_TOOL = {
         "properties": {
             "text": {"type": "string", "description": "1-3 short, warm sentences in the elder's language."},
             "quickReplies": {"type": "array", "items": {"type": "string"},
-                             "description": "Exactly 3 short things they might say next (max 5 words each)."},
+                             "description": "Exactly 3 things THE ELDER might tap to say to you next, in their own voice (first person, max 5 words, their language), e.g. 'I slept well', 'Tell me a joke', 'What's the weather?'. Never questions you would ask them, and never their own name."},
         },
         "required": ["text", "quickReplies"],
     },

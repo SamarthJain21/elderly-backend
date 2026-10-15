@@ -70,6 +70,13 @@ def _context(elder: dict[str, Any], today: list[Reminder], now_utc: dt.datetime)
     return lines
 
 
+def clean_quick_replies(options: list[str], elder_name: str) -> list[str]:
+    """Drop chips written in the agent's voice: an elder doesn't say their own name ("Are you sleeping late, Rose?")."""
+    first = elder_name.split()[0].lower() if elder_name.strip() else ""
+    out = [o for o in options if not (first and first in o.lower())]
+    return out[:3]
+
+
 def build_system_prompt(
     elder: dict[str, Any], today: list[Reminder], now_utc: dt.datetime, pending: str | None = None,
 ) -> str:
@@ -88,8 +95,9 @@ def build_system_prompt(
         "- sent_to_family_for_approval → say their family will approve it soon. not_allowed → kindly say you can't.",
         "- Emergencies (fall, chest pain, breathing trouble, bleeding, fainting): call escalate_emergency at once.",
         "",
-        "Quick replies: give exactly 3 short options (max 5 words each, same language) that they would most likely "
-        "want to say next. Make them natural answers to what you just said.",
+        "Quick replies: exactly 3 short options the ELDER would tap to answer you — written in their own voice "
+        "(first person, max 5 words, same language), e.g. 'I slept well', 'Tell me more', 'What's the weather?'. "
+        "Never write them as your questions to the elder, and never include the elder's name.",
     ]
     if pending:
         lines += ["", f"Waiting for their Yes/No right now: {pending}. If they answer it, call answer_pending_confirmation."]

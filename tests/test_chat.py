@@ -797,3 +797,9 @@ def test_not_yet_gives_caretaker_actions_and_only_caretaker_can_run_them(two_soc
         care.send_json({"type": "family_action", "messageId": m["id"], "chip": 0})
         assert care.receive_json()["type"] == "family_update"
     assert two_sockets.reminders and two_sockets.reminders[0][0] == "Take your medicine"
+
+
+def test_quick_replies_in_the_agents_voice_are_dropped() -> None:
+    from app.agent.prompt import clean_quick_replies
+    got = clean_quick_replies(["I am doing well", "Are you sleeping late, Rose?", "Shall I help you relax?", "Tell me a joke"], "Rose Devi")
+    assert got == ["I am doing well", "Shall I help you relax?", "Tell me a joke"]

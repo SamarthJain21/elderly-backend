@@ -47,7 +47,7 @@ from app.agent.family import FamilyMessage
 from app.agent.llm import AgentReply, ChatModel, CheckInTurn, Turn, get_chat_model
 from app.agent.narrate import narrate, update_card
 from app.agent.messages import Message
-from app.agent.prompt import build_checkin_prompt, build_system_prompt
+from app.agent.prompt import build_checkin_prompt, build_system_prompt, clean_quick_replies
 from app.auth import AuthedUser, authenticate
 from app.checkin import MAX_TURNS, MOOD_LABEL, CheckIn, Mood, assess, checkin_id, merge, next_missing
 from app.checkin_store import LogEntry, TodayCheckIn
@@ -187,6 +187,7 @@ class Session:
         reply = await asyncio.wait_for(
             self.model.run(prompt, await self._turns(), tool_declarations(pending is not None), execute), MODEL_TIMEOUT_S,
         )
+        reply.quickReplies = clean_quick_replies(reply.quickReplies, elder.get("name", ""))
         await self._reply(reply, ctx.touched[-1] if ctx.touched else None)
 
     async def on_confirm(self, action_id: str, approve: bool) -> None:
