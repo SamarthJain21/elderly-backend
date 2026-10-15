@@ -692,3 +692,35 @@ def test_call_my_son_gives_tap_to_call_card_even_with_strict_rules(store: Store)
     assert card["bookingLabel"] == "📞 Call Ravi Kumar" and card["status"] == "handed_off"
     assert "Ravi Kumar (son)" in m.calls[0][0]  # agent knows who's who
     assert "+91" not in m.calls[0][0]           # …but never sees phone numbers
+
+
+@pytest.mark.anyio
+async def test_hung_model_times_out_and_falls_back() -> None:
+    import asyncio as aio
+
+    from app.agent.llm import GeminiChatModel
+
+    class Slow(_FakeModels):
+        async def generate_content(self, *, model: str, contents: Any, config: Any) -> Any:
+            if model == "big":
+                self.tried.append(model)
+                await aio.sleep(5)  # hangs, no error
+            return await super().generate_content(model=model, contents=contents, config=config)
+
+    fake = Slow({"lite": '{"reply": "Hi", "quickReplies": ["a", "b", "c"]}'})
+    r = await GeminiChatModel(_client(fake), ["big", "lite"], per_call_timeout_s=0.05).complete("sys", [Turn("elder", "hi")], AgentReply)
+    assert fake.tried == ["big", "lite"] and r.reply == "Hi"
+
+
+@pytest.mark.anyio
+async def test_hung_last_model_raises_timeout() -> None:
+    import asyncio as aio
+
+    from app.agent.llm import GeminiChatModel
+
+    class Hang(_FakeModels):
+        async def generate_content(self, *, model: str, contents: Any, config: Any) -> Any:
+            await aio.sleep(5)
+
+    with pytest.raises(TimeoutError):
+        await GeminiChatModel(_client(Hang({})), ["only"], per_call_timeout_s=0.05).complete("sys", [Turn("elder", "hi")], AgentReply)

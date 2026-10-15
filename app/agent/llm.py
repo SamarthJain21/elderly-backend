@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal, Protocol, TypeVar
@@ -58,17 +59,35 @@ def _reply_from_args(args: dict[str, Any]) -> AgentReply:
 log = logging.getLogger(__name__)
 
 
-def _is_capacity_error(exc: errors.APIError) -> bool:
-    """Overloaded (503) or rate-limited (429): worth trying the next model."""
-    return exc.code in (429, 503)
+def _is_capacity_error(exc: Exception) -> bool:
+    """Overloaded (503), rate-limited (429), or hung past our per-call limit: worth trying the next model."""
+    if isinstance(exc, TimeoutError):
+        return True
+    return isinstance(exc, errors.APIError) and exc.code in (429, 503)
+
+
+# An overloaded model sometimes doesn't error — it just hangs. Cap each call so the next model gets a turn
+# well inside the caller's overall budget (chat turns allow ~45s in total).
+PER_CALL_TIMEOUT_S = 12.0  # worst tool turn: 3 calls ≈ 36s, inside the 45s turn budget
 
 
 class GeminiChatModel:
-    def __init__(self, client: genai.Client, models: list[str]) -> None:
+    def __init__(self, client: genai.Client, models: list[str], per_call_timeout_s: float = PER_CALL_TIMEOUT_S) -> None:
         if not models:
             raise ValueError("at least one model required")
         self._client = client
         self._models = models
+        self._timeout = per_call_timeout_s
+
+    async def _call(self, model: str, contents: list[types.Content], config: types.GenerateContentConfig) -> types.GenerateContentResponse:
+        return await asyncio.wait_for(
+            self._client.aio.models.generate_content(model=model, contents=contents, config=config), self._timeout)
+
+    def _fallback_or_raise(self, i: int, model: str, exc: Exception) -> None:
+        if not _is_capacity_error(exc) or i == len(self._models) - 1:
+            raise exc
+        why = "timed out" if isinstance(exc, TimeoutError) else str(getattr(exc, "code", exc))
+        log.warning("Gemini %s unavailable (%s); falling back to %s", model, why, self._models[i + 1])
 
     async def complete(self, system: str, history: list[Turn], schema: type[R]) -> R:
         contents = [
@@ -78,10 +97,8 @@ class GeminiChatModel:
         for i, model in enumerate(self._models):
             try:
                 return await self._generate(model, system, contents, schema)
-            except errors.APIError as exc:
-                if not _is_capacity_error(exc) or i == len(self._models) - 1:
-                    raise
-                log.warning("Gemini %s unavailable (%s); falling back to %s", model, exc.code, self._models[i + 1])
+            except (errors.APIError, TimeoutError) as exc:
+                self._fallback_or_raise(i, model, exc)
         raise AssertionError("unreachable")
 
     def _tool_config(self, system: str, tools: list[dict[str, Any]], allowed: list[str] | None) -> types.GenerateContentConfig:
@@ -103,12 +120,9 @@ class GeminiChatModel:
         ]
         for i, model in enumerate(self._models):
             try:
-                first = await self._client.aio.models.generate_content(
-                    model=model, contents=contents, config=self._tool_config(system, tools, None))
-            except errors.APIError as exc:
-                if not _is_capacity_error(exc) or i == len(self._models) - 1:
-                    raise
-                log.warning("Gemini %s unavailable (%s); falling back to %s", model, exc.code, self._models[i + 1])
+                first = await self._call(model, contents, self._tool_config(system, tools, None))
+            except (errors.APIError, TimeoutError) as exc:
+                self._fallback_or_raise(i, model, exc)
                 continue
             return await self._after_first(model, system, contents, tools, first, execute)
         raise AssertionError("unreachable")
@@ -128,21 +142,20 @@ class GeminiChatModel:
                     types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(name=call.name, response=result))])]
         try:
             # Same model as the first call: thought signatures don't transfer across models.
-            second = await self._client.aio.models.generate_content(
-                model=model, contents=followup, config=self._tool_config(system, tools, ["reply"]))
+            second = await self._call(model, followup, self._tool_config(system, tools, ["reply"]))
             reply_call = next((c for c in second.function_calls or [] if c.name == "reply"), None)
             if reply_call is not None:
                 return _reply_from_args(dict(reply_call.args or {}))
-        except errors.APIError:
+        except (errors.APIError, TimeoutError):
             log.exception("Gemini follow-up failed after tool %s ran", call.name)
         # The action already happened: never fail the turn now; fall back to a plain statement.
         return AgentReply(reply=str(result.get("say") or "Done."), quickReplies=[])
 
     async def _generate(self, model: str, system: str, contents: list[types.Content], schema: type[R]) -> R:
-        resp = await self._client.aio.models.generate_content(
-            model=model,
-            contents=contents,
-            config=types.GenerateContentConfig(
+        resp = await self._call(
+            model,
+            contents,
+            types.GenerateContentConfig(
                 system_instruction=system,
                 response_mime_type="application/json",
                 response_schema=schema,
