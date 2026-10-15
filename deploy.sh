@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Deploy the API to Cloud Run (asia-southeast1). Safe to re-run.
-# Prereqs: gcloud logged in, project on Blaze, `GEMINI_API_KEY` secret created (see README).
+# Prereqs: gcloud logged in, project on Blaze.
+# Gemini runs on Vertex AI with the service's own identity: no API key, and prompts aren't used for training.
 set -euo pipefail
 
 PROJECT=elderly-3e18c
@@ -13,11 +14,11 @@ gcloud config set project "$PROJECT" >/dev/null
 
 # One-time setup (idempotent): APIs and a dedicated, least-privilege service account.
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
-  secretmanager.googleapis.com firestore.googleapis.com identitytoolkit.googleapis.com --quiet
+  aiplatform.googleapis.com firestore.googleapis.com identitytoolkit.googleapis.com --quiet
 if ! gcloud iam service-accounts describe "$SA" >/dev/null 2>&1; then
   gcloud iam service-accounts create "$SERVICE" --display-name "Elderly API (Cloud Run)"
 fi
-for role in roles/datastore.user roles/firebaseauth.admin roles/secretmanager.secretAccessor; do
+for role in roles/datastore.user roles/firebaseauth.admin roles/aiplatform.user; do
   gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" --role "$role" \
     --condition=None --quiet >/dev/null
 done
@@ -33,8 +34,7 @@ gcloud run deploy "$SERVICE" \
   --min-instances 0 --max-instances 1 \
   --timeout 3600 --session-affinity \
   --memory 512Mi --cpu 1 \
-  --set-env-vars "^@^CORS_ORIGINS=${ORIGINS}" \
-  --set-secrets "GEMINI_API_KEY=gemini-api-key:latest" \
+  --set-env-vars "^@^CORS_ORIGINS=${ORIGINS}@VERTEX_LOCATION=global" \
   --quiet
 
 gcloud run services describe "$SERVICE" --region "$REGION" --format 'value(status.url)'
