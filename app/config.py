@@ -17,9 +17,10 @@ class Settings(BaseSettings):
     elder_email_domain: str = "elderly.app"
     # Gemini: AI Studio key if set (free tier); otherwise Vertex AI billed to firebase_project_id.
     gemini_api_key: SecretStr | None = None
-    gemini_model: str = "gemini-3.8-flash"
-    # Tried in order when the primary is overloaded (503) or rate-limited (429).
-    gemini_fallback_models: list[str] = ["gemini-3.5-flash-lite"]
+    # Flash-Lite first: ~1.4s on Vertex vs 5–17s for 3.8 Flash, and the elder is waiting on a voice reply.
+    gemini_model: str = "gemini-3.5-flash-lite"
+    # Tried in order when the primary is overloaded (503), rate-limited (429) or hangs.
+    gemini_fallback_models: list[str] = ["gemini-3.8-flash"]
     vertex_location: str = "global"
     # SMS to volunteers. Unset → texts are only recorded in the activity log.
     twilio_account_sid: str | None = None
