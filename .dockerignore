@@ -1,0 +1,10 @@
+# Never ship secrets or local state into the image.
+.env
+.env.*
+service-account*.json
+*-firebase-adminsdk-*.json
+.venv
+.git
+tests
+**/__pycache__
+*.pyc
