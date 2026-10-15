@@ -1,0 +1,29 @@
+# CI/CD: on push to main → test → build image → deploy to Cloud Run.
+# Deploying with --image keeps the service's existing settings (identity, env vars, scaling).
+substitutions:
+  _REGION: asia-southeast1
+  _SERVICE: elderly-api
+  _IMAGE: asia-southeast1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/elderly-api
+
+steps:
+  - id: test
+    name: ghcr.io/astral-sh/uv:0.7.6-python3.12-bookworm-slim
+    entrypoint: bash
+    args: ["-c", "uv sync --frozen && uv run pytest -q"]
+
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_IMAGE}:${SHORT_SHA}", "-t", "${_IMAGE}:latest", "."]
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args: ["push", "--all-tags", "${_IMAGE}"]
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args: ["run", "deploy", "${_SERVICE}", "--image", "${_IMAGE}:${SHORT_SHA}", "--region", "${_REGION}", "--quiet"]
+
+options:
+  logging: CLOUD_LOGGING_ONLY   # required when the build runs as a custom service account
+timeout: 1200s
