@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app import firebase
 from app.auth import CurrentUser, Role
+from app.validation import Name
 
 router = APIRouter(tags=["auth"])
 
@@ -25,7 +26,7 @@ def get_me(user: CurrentUser) -> Me:
 
 
 class CaretakerSignup(BaseModel):
-    name: str
+    name: Name
 
 
 @router.post("/onboarding/caretaker", status_code=status.HTTP_201_CREATED)

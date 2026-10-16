@@ -331,7 +331,7 @@ def test_guided_checkin_collects_all_fields_then_logs(store: Store) -> None:
 
     c = next(iter(store.checkins.values()))
     assert (c.status, c.mood, c.sleepQuality, c.meals, c.medicationTaken) == ("done", "good", "poorly", "tea and toast", True)
-    assert [m.text for m in store["e1"] if m.sender == "elder"][0] == "I'm feeling good"
+    assert [m.text for m in store["e1"] if m.sender == "elder"][0] == "आज मूड अच्छा है"  # the test elder speaks Hindi
     assert len(store.logs) == 1 and store.logs[0].kind == "warn"  # slept poorly
     assert "Elder: badly" in store.transcripts[c.id]
     assert all("daily check-in" in prompt for prompt, _ in model.calls)
@@ -665,8 +665,8 @@ def _approve_all(store: Store, tool: str) -> None:
 
 def test_volunteer_request_texts_best_trusted_volunteer(store: Store) -> None:
     store.people = [
-        Contact(name="Anil", phone="+91111", kind="volunteer", skills=["plumbing"], trusted=False, rating=5),
-        Contact(name="Suresh", phone="+91222", kind="volunteer", skills=["plumbing"], trusted=True),
+        Contact(name="Anil", phone="+91 91111 11111", kind="volunteer", skills=["plumbing"], trusted=False, rating=5),
+        Contact(name="Suresh", phone="+91 92222 22222", kind="volunteer", skills=["plumbing"], trusted=True),
     ]
     _approve_all(store, "notify_volunteer")
     m = FakeModel(tool_calls=[("notify_volunteer", {"skill": "plumbing", "title": "Fix leaking tap", "preferred_time": "today"})])
@@ -680,13 +680,13 @@ def test_volunteer_request_texts_best_trusted_volunteer(store: Store) -> None:
         app.dependency_overrides.clear()
     assert m.tool_results[0]["volunteer"] == "Suresh"
     to, body = store.texts[0]
-    assert to == "+91222" and "Fix leaking tap" in body and "12 MG Road" in body
+    assert to == "+91 92222 22222" and "Fix leaking tap" in body and "12 MG Road" in body
     req = next(iter(store.requests.values()))
     assert req.status == "notified" and req.volunteerName == "Suresh" and req.notifiedVia == ["log"]
 
 
 def test_volunteer_requests_wait_for_caretaker_by_default(store: Store) -> None:
-    store.people = [Contact(name="Suresh", phone="+91222", kind="volunteer", skills=["plumbing"], trusted=True)]
+    store.people = [Contact(name="Suresh", phone="+91 92222 22222", kind="volunteer", skills=["plumbing"], trusted=True)]
     m = FakeModel(tool_calls=[("notify_volunteer", {"skill": "plumbing", "title": "Fix tap"})])
     _with_model(m)
     try:

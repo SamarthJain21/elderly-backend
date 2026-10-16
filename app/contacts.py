@@ -9,6 +9,7 @@ from google.cloud.firestore import Query
 from pydantic import BaseModel, Field, field_validator
 
 from app import firebase
+from app.validation import Name, Phone, ShortText
 
 ContactKind = Literal["family", "friend", "neighbour", "volunteer", "doctor"]
 RequestStatus = Literal["open", "notified", "confirmed", "done", "cancelled"]
@@ -19,10 +20,10 @@ def _now() -> dt.datetime:
 
 
 class ContactIn(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-    phone: str = Field(min_length=5, max_length=20)
+    name: Name
+    phone: Phone
     kind: ContactKind = "family"
-    relationship: str = Field(default="", max_length=50)  # "son", "neighbour in 4B"…
+    relationship: ShortText = ""  # "son", "neighbour in 4B"…
     skills: list[str] = Field(default_factory=list, max_length=10)  # for volunteers: plumbing, tech help…
     trusted: bool = False
     email: str = Field(default="", max_length=200)
