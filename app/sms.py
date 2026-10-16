@@ -14,6 +14,9 @@ log = logging.getLogger(__name__)
 
 def send_sms(to: str, body: str) -> Literal["sms", "log"]:
     """Returns how it was delivered. Never raises: a failed text shouldn't break the agent turn."""
+    if to.replace(" ", "").startswith("+000"):  # sandbox/demo numbers (app/sandbox.py) are never texted
+        log.info("SMS not sent (sandbox number), %d chars", len(body))
+        return "log"
     s = get_settings()
     if not (s.twilio_account_sid and s.twilio_auth_token and s.twilio_from_number):
         # Never log the body: it carries names, addresses and health details.

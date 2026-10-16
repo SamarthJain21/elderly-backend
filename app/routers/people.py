@@ -97,6 +97,8 @@ def invite_caretaker(elder_id: str, body: Invite, user: CurrentUser) -> InviteRe
     """Existing caretaker → added now. Otherwise → pending invite, attached when they first sign in with Google."""
     load_elder(user, elder_id, caretaker_only=True)
     ratelimit.account_writes.check(user.uid)
+    if user.sandbox:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not available in the sandbox")
     email = body.email.strip().lower()
     db = firebase.get_db()
     try:
