@@ -134,3 +134,19 @@ def test_elder_profile_includes_caretaker_names_but_no_contact_details(monkeypat
 def test_names_reads_naturally() -> None:
     assert [alerts.names(x) for x in (["Emma"], ["Emma", "Tom"], ["Emma", "Tom", "David"])] == \
         ["Emma", "Emma and Tom", "Emma, Tom and David"]
+
+
+def test_finished_walkthrough_is_remembered_on_the_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from app.routers import elders
+    updates: list[dict[str, Any]] = []
+    monkeypatch.setattr(elders, "load_elder", lambda *a, **k: {"name": "Rose"})
+    monkeypatch.setattr(elders.firebase, "get_db", lambda: SimpleNamespace(collection=lambda _: SimpleNamespace(
+        document=lambda _: SimpleNamespace(update=lambda d: updates.append(d)))))
+    app.dependency_overrides[get_authed_user] = lambda: ELDER_USER
+    try:
+        assert TestClient(app).post("/elders/e1/app-ready").status_code == 204
+    finally:
+        app.dependency_overrides.clear()
+    assert "appReadyAt" in updates[0]

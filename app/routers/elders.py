@@ -104,6 +104,7 @@ class ElderProfile(BaseModel):
     # Names only (no emails/phones) so the elder's app can say "Samarth set this up for you".
     caretakerNames: list[str] = []
     face: str | None = None  # illustration key (sandbox personas); initials when unset
+    appReady: bool = False   # the elder finished the first-run walkthrough on some device — don't show it again
 
 
 def _assessment_from(elder: dict[str, Any], rules: dict[str, Any]) -> Assessment | None:
@@ -154,6 +155,7 @@ def get_elder(elder_id: str, user: CurrentUser) -> ElderProfile:
         assessment=_assessment_from(elder, rules_snap.to_dict() or {}),
         caretakerNames=[n for n in names if n],
         face=elder.get("face"),
+        appReady=bool(elder.get("appReadyAt")) or bool(elder.get("sandbox")),
     )
 
 
@@ -187,3 +189,10 @@ def save_assessment(elder_id: str, body: Assessment, user: CurrentUser) -> Asses
         batch.set(reminders.document(r.id), r.model_dump(mode="json"))
     batch.commit()
     return body
+
+
+@router.post("/{elder_id}/app-ready", status_code=status.HTTP_204_NO_CONTENT)
+def mark_app_ready(elder_id: str, user: CurrentUser) -> None:
+    """The elder finished the walkthrough: remembered on the server, so a new phone or cleared browser skips it."""
+    load_elder(user, elder_id)
+    firebase.get_db().collection("elders").document(elder_id).update({"appReadyAt": SERVER_TIMESTAMP})
