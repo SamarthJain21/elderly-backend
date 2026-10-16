@@ -51,10 +51,10 @@ from app.agent.narrate import narrate, update_card
 from app.agent.messages import Message
 from app.agent.prompt import build_checkin_prompt, build_system_prompt, clean_quick_replies
 from app.auth import AuthedUser, authenticate
-from app.checkin import MAX_TURNS, CheckIn, Mood, assess, checkin_id, merge, next_missing
+from app.checkin import MAX_TURNS, CheckIn, SleepQuality, Mood, assess, checkin_id, merge, next_missing
 from app.checkin_store import LogEntry, TodayCheckIn
 from app.routers import insights_api
-from app.phrases import checkin_opener
+from app.phrases import checkin_opener, checkin_thanks
 from app.routers.reminders import all_reminders, save_reminder
 from app.routers.settings import load_rules
 from app.schedule import Reminder, local_today, reminders_for_day
@@ -97,6 +97,15 @@ class TextFrame(BaseModel):
 class StartCheckInFrame(BaseModel):
     type: Literal["start_checkin"]
     mood: Mood | None = None
+
+
+class CheckInAnswersFrame(BaseModel):
+    """The tap check-in: four big buttons instead of a chat. None = skipped."""
+    type: Literal["checkin_answers"]
+    mood: Mood
+    sleepQuality: SleepQuality | None = None
+    ate: bool | None = None
+    medicationTaken: bool | None = None
 
 
 class ChipIdeas(AgentReply):
@@ -274,6 +283,33 @@ class Session:
             await asyncio.to_thread(insights_api.new_drift_flags, self.elder_id, await self._elder())
         except Exception:  # noqa: BLE001 — never fail the elder's check-in over an insights hiccup
             log.exception("drift flags failed for elder %s", self.elder_id)
+
+    async def checkin_answers(self, a: CheckInAnswersFrame) -> None:
+        """Tap check-in: the elder's answers are the facts — no model needed. Same triage, family log and drift
+        flags as the chat check-in (_finish), then a short thank-you in their language."""
+        state = await self.today_checkin()
+        if state is None:
+            await self.send({"type": "error", "message": "Check-ins start after the assessment is done."})
+            return
+        if state.status == "done":
+            await self.send({"type": "error", "message": "You've already checked in today. 💚"})
+            return
+        elder, now = await self._elder(), dt.datetime.now(dt.UTC)
+        c = state.checkIn or CheckIn(id=checkin_id(self.elder_id, state.date), elderId=self.elder_id, date=state.date,
+                                     needsMedication=bool(elder.get("medicationSchedule")), startedAt=now)
+        meals = None if a.ate is None else ("ate something" if a.ate else "nothing yet")
+        c = c.model_copy(update={"mood": a.mood, "sleepQuality": a.sleepQuality, "meals": meals,
+                                 "medicationTaken": a.medicationTaken, "turns": c.turns + 1})
+        await self._finish(c, now)
+        ct_ids = elder.get("caretakerIds") or []
+        name = (await asyncio.to_thread(family.caretaker_name, ct_ids[0])).split(" ")[0] if ct_ids else None
+        name = None if name == "Family" else name  # caretaker_name's placeholder: say "your family" in their language
+        thanks = checkin_thanks(elder.get("language", "en-US"), a.mood, name)
+        msg = Message(sender="agent", text=thanks, quickReplies=[])
+        voice_push.speak_reply(self.elder_id, elder, msg.id, msg.text)
+        await asyncio.to_thread(messages.save, self.elder_id, msg)
+        await self.send({"type": "message", "message": msg.model_dump(mode="json")})
+        await self.send_checkin_state()
 
     async def start_checkin(self, mood: Mood | None) -> None:
         state = await self.today_checkin()
@@ -458,6 +494,8 @@ async def chat(ws: WebSocket, elder_id: str, model: Annotated[ChatModel, Depends
                     await s.on_text(frame.text.strip())
                 elif kind == "start_checkin":
                     await s.start_checkin(StartCheckInFrame.model_validate(raw).mood)
+                elif kind == "checkin_answers":
+                    await s.checkin_answers(CheckInAnswersFrame.model_validate(raw))
                 elif kind == "confirm":
                     frame_c = ConfirmFrame.model_validate(raw)
                     await s.on_confirm(frame_c.actionId, frame_c.approve)
