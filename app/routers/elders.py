@@ -103,6 +103,8 @@ class ElderProfile(BaseModel):
     assessment: Assessment | None
     # Names only (no emails/phones) so the elder's app can say "Samarth set this up for you".
     caretakerNames: list[str] = []
+    # Their family as the elder sees them: names + Google photos (no emails or phones).
+    family: list[dict[str, str | None]] = []
     face: str | None = None  # illustration key (sandbox personas); initials when unset
     appReady: bool = False   # the elder finished the first-run walkthrough on some device — don't show it again
 
@@ -145,7 +147,8 @@ def get_elder(elder_id: str, user: CurrentUser) -> ElderProfile:
     db = firebase.get_db()
     rules_snap = db.collection("rules").document(elder_id).get()
     refs = [db.collection("caretakers").document(uid) for uid in elder.get("caretakerIds", [])]
-    names = [str((snap.to_dict() or {}).get("name") or "") for snap in db.get_all(refs) if snap.exists] if refs else []
+    cts = [snap.to_dict() or {} for snap in db.get_all(refs) if snap.exists] if refs else []
+    names = [str(c.get("name") or "") for c in cts]
     return ElderProfile(
         elderId=elder_id,
         name=elder["name"],
@@ -154,6 +157,7 @@ def get_elder(elder_id: str, user: CurrentUser) -> ElderProfile:
         sharingTier=elder.get("sharingTier", "daily_summary"),
         assessment=_assessment_from(elder, rules_snap.to_dict() or {}),
         caretakerNames=[n for n in names if n],
+        family=[{"name": str(c.get("name")), "photo": c.get("photoUrl")} for c in cts if c.get("name")],
         face=elder.get("face"),
         appReady=bool(elder.get("appReadyAt")) or bool(elder.get("sandbox")),
     )
