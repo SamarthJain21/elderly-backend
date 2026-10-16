@@ -15,6 +15,7 @@ from app.access import load_elder
 from app.auth import Caretaker, CurrentUser
 from app.config import get_settings
 from app.schedule import Assessment, CheckInSchedule, Meals, Medication, Sleep, medication_reminders
+from app.validation import Name, Phone
 
 router = APIRouter(prefix="/elders", tags=["elders"])
 
@@ -30,8 +31,8 @@ def generate_temp_password(length: int = 10) -> str:
 
 
 class ElderCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-    phone: str = Field(min_length=5, max_length=20)
+    name: Name
+    phone: Phone
     language: Language = "en-US"
 
 

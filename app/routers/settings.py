@@ -12,6 +12,7 @@ from app.auth import CurrentUser
 from app.autonomy import AutonomyRules, currency_for_timezone, default_rules
 from app.routers.elders import Language
 from app.tools.geo import geocode_sync
+from app.validation import Name, Phone, ShortText
 
 router = APIRouter(prefix="/elders/{elder_id}", tags=["settings"])
 
@@ -45,9 +46,9 @@ def put_rules(elder_id: str, body: AutonomyRules, user: CurrentUser) -> Autonomy
 
 
 class EmergencyContact(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-    phone: str = Field(min_length=5, max_length=20)
-    relationship: str = Field(default="", max_length=50)
+    name: Name
+    phone: Phone
+    relationship: ShortText = ""
     # Illustration key for people without a photo (e.g. "emma"); the app shows initials when unset.
     face: str | None = Field(default=None, max_length=20)
 
@@ -86,8 +87,8 @@ def _locate(a: Address, tz: str | None) -> Address:
 
 
 class ProfileUpdate(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-    phone: str = Field(min_length=5, max_length=20)
+    name: Name
+    phone: Phone
     language: Language
     sharingTier: SharingTier
     address: Address | None = None  # delivery + ride pickup; city also drives weather

@@ -90,3 +90,11 @@ def test_urgent_concerns_are_also_recorded_as_anomalies() -> None:
     c = merge(ci(), Extracted(concerns=["knee pain"], urgent=["fell in bathroom"]))
     assert c.anomalies == ["knee pain", "fell in bathroom"]
     assert c.urgent == ["fell in bathroom"]
+
+
+def test_check_in_opener_is_in_the_elders_language() -> None:
+    from app.phrases import checkin_opener
+    assert checkin_opener("th-TH", "good") == "วันนี้รู้สึกดี"
+    assert checkin_opener("hi-Latn", "bad") == "Aaj tabiyat theek nahi hai"
+    assert checkin_opener("ja-JP", "good") == "I'm feeling good"   # no translation yet → English
+    assert checkin_opener("hi-IN", None) == "आज का हाल बताना है"

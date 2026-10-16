@@ -51,9 +51,10 @@ from app.agent.narrate import narrate, update_card
 from app.agent.messages import Message
 from app.agent.prompt import build_checkin_prompt, build_system_prompt, clean_quick_replies
 from app.auth import AuthedUser, authenticate
-from app.checkin import MAX_TURNS, MOOD_LABEL, CheckIn, Mood, assess, checkin_id, merge, next_missing
+from app.checkin import MAX_TURNS, CheckIn, Mood, assess, checkin_id, merge, next_missing
 from app.checkin_store import LogEntry, TodayCheckIn
 from app.routers import insights_api
+from app.phrases import checkin_opener
 from app.routers.reminders import all_reminders, save_reminder
 from app.routers.settings import load_rules
 from app.schedule import Reminder, local_today, reminders_for_day
@@ -282,17 +283,17 @@ class Session:
         if state.status == "done":
             await self.send({"type": "error", "message": "You've already checked in today. 💚"})
             return
+        elder = await self._elder()
         c = state.checkIn
         if c is None:
-            elder = await self._elder()
             c = CheckIn(
                 id=checkin_id(self.elder_id, state.date), elderId=self.elder_id, date=state.date,
                 needsMedication=bool(elder.get("medicationSchedule")), startedAt=dt.datetime.now(dt.UTC), mood=mood,
             )
             await asyncio.to_thread(checkin_store.save_checkin, c)
-        await self.save_elder_message(f"I'm feeling {MOOD_LABEL[mood]}" if mood else "Let's do my check-in")
+        await self.save_elder_message(checkin_opener(elder.get("language", "en-US"), mood))
         await self.send({"type": "typing"})
-        await self.checkin_turn(c)
+        await self.checkin_turn(c, elder)
 
     async def _make_chips(self, elder: dict[str, Any], from_caretaker: bool, sender_name: str, text: str) -> list[Chip]:
         """Chips for whoever receives this family message. Presets first; else the model suggests, code validates."""
