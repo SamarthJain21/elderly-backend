@@ -34,7 +34,7 @@ from pydantic import BaseModel, Field, ValidationError
 from app import alerts as alerts_mod  # tests swap its storage
 from app import checkin_store, contacts, ratelimit
 from app.access import load_elder
-from app.agent import family, live, messages
+from app.agent import family, live, messages, voice_push
 from app.agent.chips import (
     FALLBACK_FOR_CARETAKER,
     FALLBACK_FOR_ELDER,
@@ -160,9 +160,10 @@ class Session:
         await asyncio.to_thread(messages.save, self.elder_id, msg)
         await self.send({"type": "message", "message": msg.model_dump(mode="json")})
 
-    async def _reply(self, reply: AgentReply, action: Action | None = None) -> None:
+    async def _reply(self, reply: AgentReply, elder: dict[str, Any], action: Action | None = None) -> None:
         msg = Message(sender="agent", text=reply.reply, quickReplies=reply.quickReplies,
                       action=ActionCard.of(action) if action else None)
+        voice_push.speak_reply(self.elder_id, elder, msg.id, msg.text, reply.spoken)  # overlaps the save below
         await asyncio.to_thread(messages.save, self.elder_id, msg)
         if action is not None:
             action.messageId = msg.id
@@ -220,7 +221,7 @@ class Session:
         )
         t.mark("model+tools")
         reply.quickReplies = clean_quick_replies(reply.quickReplies, elder.get("name", ""))
-        await self._reply(reply, ctx.touched[-1] if ctx.touched else None)
+        await self._reply(reply, elder, ctx.touched[-1] if ctx.touched else None)
         t.mark("reply_sent")
         t.log(tool=ctx.touched[-1].tool if ctx.touched else None)
 
@@ -250,7 +251,7 @@ class Session:
             await self._finish(c, now)
         else:
             await asyncio.to_thread(checkin_store.save_checkin, c)
-        await self._reply(turn)  # the elder sees the reply before the status refresh below
+        await self._reply(turn, elder)  # the elder sees the reply before the status refresh below
         t.mark("reply_sent")
         await self.send_checkin_state()
         t.log()

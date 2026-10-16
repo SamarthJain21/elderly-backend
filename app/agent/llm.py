@@ -28,6 +28,7 @@ class AgentReply(BaseModel):
     quickReplies: list[str] = Field(
         description="Exactly 3 short things the elder might tap next, in their language, max 5 words each.",
     )
+    spoken: str | None = Field(default=None, description="ONLY for Hinglish elders: the same reply written in Devanagari script, for the voice. Leave out otherwise.")
 
 
 class CheckInTurn(AgentReply):
@@ -53,7 +54,8 @@ class ChatModel(Protocol):
 
 def _reply_from_args(args: dict[str, Any]) -> AgentReply:
     quick = [str(q).strip() for q in args.get("quickReplies") or [] if str(q).strip()][:3]
-    return AgentReply(reply=str(args.get("text", "")).strip(), quickReplies=quick)
+    spoken = str(args.get("spoken") or "").strip() or None
+    return AgentReply(reply=str(args.get("text", "")).strip(), quickReplies=quick, spoken=spoken)
 
 
 log = logging.getLogger(__name__)
