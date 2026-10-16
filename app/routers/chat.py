@@ -89,6 +89,18 @@ HISTORY_TURNS = 20
 HISTORY_ON_CONNECT = 50
 
 
+def frame_error(kind: str | None, raw: object, exc: ValidationError) -> str:
+    """Say what was actually wrong (it used to say '1–1000 characters' for any bad frame), and log it."""
+    text = raw.get("text") if isinstance(raw, dict) else None
+    log.warning("invalid %s frame from client: %s", kind, [(e["loc"], e["type"]) for e in exc.errors()][:3])
+    if kind in ("message", "family_message", "family_reply") and isinstance(text, str):
+        if not text.strip():
+            return "Please say or type something first."
+        if len(text) > 1000:
+            return "That message is too long — please keep it under 1000 characters."
+    return "Sorry, that didn't go through. Please try again."
+
+
 class TextFrame(BaseModel):
     type: Literal["message"]
     text: str = Field(min_length=1, max_length=1000)
@@ -506,8 +518,8 @@ async def chat(ws: WebSocket, elder_id: str, model: Annotated[ChatModel, Depends
                 elif kind == "confirm":
                     frame_c = ConfirmFrame.model_validate(raw)
                     await s.on_confirm(frame_c.actionId, frame_c.approve)
-            except ValidationError:
-                await s.send({"type": "error", "message": "Message must be 1–1000 characters"})
+            except ValidationError as exc:
+                await s.send({"type": "error", "message": frame_error(kind, raw, exc)})
             except WebSocketDisconnect:
                 raise
             except Exception:
