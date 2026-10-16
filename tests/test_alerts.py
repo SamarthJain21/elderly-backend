@@ -85,3 +85,45 @@ def test_caretaker_acknowledges_and_elder_resolves(env: dict[str, Any]) -> None:
     done = c.post(f"/elders/e1/alerts/{aid}", json={"action": "resolve"}).json()
     assert done["status"] == "resolved" and done["resolvedBy"] == "elder"
     assert [p["alert"]["status"] for p in env["pushed"]] == ["active", "acknowledged", "resolved"]
+
+
+def test_elder_profile_includes_caretaker_names_but_no_contact_details(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import firebase
+    from app.routers import elders
+
+    class Snap:
+        def __init__(self, data: dict[str, Any] | None) -> None:
+            self._d, self.exists = data, data is not None
+        def to_dict(self) -> dict[str, Any] | None:
+            return self._d
+
+    class Doc:
+        def __init__(self, data: dict[str, Any] | None) -> None:
+            self._d = data
+        def get(self) -> Snap:
+            return Snap(self._d)
+
+    caretakers = {"c1": {"name": "Samarth", "email": "s@example.com"}, "c2": {"name": "Priya", "email": "p@example.com"}}
+
+    class Col:
+        def __init__(self, name: str) -> None:
+            self.name = name
+        def document(self, did: str) -> Any:
+            return ("caretaker", did) if self.name == "caretakers" else Doc({})
+
+    class DB:
+        def collection(self, name: str) -> Col:
+            return Col(name)
+        def get_all(self, refs: list[Any]) -> list[Snap]:
+            return [Snap(caretakers.get(r[1])) for r in refs]
+
+    elder = {**ELDER, "name": "Rose", "language": "en-US", "caretakerIds": ["c1", "c2", "gone"]}
+    monkeypatch.setattr(elders, "load_elder", lambda user, eid, **_: elder)
+    monkeypatch.setattr(firebase, "get_db", lambda: DB())
+    app.dependency_overrides[get_authed_user] = lambda: ELDER_USER
+    try:
+        body = TestClient(app).get("/elders/e1").json()
+    finally:
+        app.dependency_overrides.clear()
+    assert body["caretakerNames"] == ["Samarth", "Priya"]
+    assert "s@example.com" not in str(body)

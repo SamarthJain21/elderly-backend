@@ -36,3 +36,24 @@ def test_weather_advice_flags_heat_and_rain() -> None:
     assert "very hot" in advice_for(38.0, 0)
     assert "umbrella" in advice_for(30.0, 60)
     assert advice_for(30.0, 10) == "a comfortable day"
+
+
+import pytest  # noqa: E402
+
+from app.tools import weather as weather_mod  # noqa: E402
+
+
+@pytest.mark.anyio
+async def test_weather_is_cached_per_city(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    async def fake_fetch(city: str) -> weather_mod.Weather:
+        calls.append(city)
+        return weather_mod.Weather(place=city, nowC=30, feelsLikeC=33, conditions="clear", feelsLikeMaxC=35,
+                                   rainChancePct=10, heatRisk=False, advice="a comfortable day")
+
+    weather_mod._cache.clear()
+    monkeypatch.setattr(weather_mod, "_fetch_weather", fake_fetch)
+    await weather_mod.get_weather("Pune")
+    await weather_mod.get_weather(" pune ")
+    assert calls == ["Pune"]

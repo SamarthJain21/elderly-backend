@@ -1,6 +1,8 @@
 """Weather via Open-Meteo (free, no API key)."""
 from __future__ import annotations
 
+import time
+
 import httpx
 from pydantic import BaseModel
 
@@ -32,7 +34,23 @@ def advice_for(feels_max: float, rain_pct: int) -> str:
     return "; ".join(tips) or "a comfortable day"
 
 
+# Open-Meteo's servers are far from Asia (~0.5–1.5 s per call, two calls per lookup). Forecasts change slowly:
+# cache per city for 15 minutes. In-process is fine (one Cloud Run instance; a cold start just refetches).
+_CACHE_TTL_S = 15 * 60
+_cache: dict[str, tuple[float, Weather]] = {}
+
+
 async def get_weather(city: str) -> Weather:
+    key = city.strip().lower()
+    hit = _cache.get(key)
+    if hit and time.monotonic() - hit[0] < _CACHE_TTL_S:
+        return hit[1]
+    w = await _fetch_weather(city)
+    _cache[key] = (time.monotonic(), w)
+    return w
+
+
+async def _fetch_weather(city: str) -> Weather:
     async with httpx.AsyncClient(timeout=10) as client:
         geo = (await client.get("https://geocoding-api.open-meteo.com/v1/search", params={"name": city, "count": 1})).json()
         results = geo.get("results") or []

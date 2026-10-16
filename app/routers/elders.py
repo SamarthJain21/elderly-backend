@@ -4,13 +4,13 @@ import secrets
 import uuid
 from typing import Any, Literal
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, HTTPException, status
 from firebase_admin import auth as fb_auth
 from google.cloud.firestore import SERVER_TIMESTAMP, ArrayUnion
 from google.cloud.firestore_v1.base_query import FieldFilter
 from pydantic import BaseModel, Field
 
-from app import firebase
+from app import firebase, ratelimit
 from app.access import load_elder
 from app.auth import Caretaker, CurrentUser
 from app.config import get_settings
@@ -18,7 +18,8 @@ from app.schedule import Assessment, CheckInSchedule, Meals, Medication, Sleep, 
 
 router = APIRouter(prefix="/elders", tags=["elders"])
 
-Language = Literal["en-US", "hi-IN", "th-TH", "ja-JP", "ko-KR"]
+# hi-Latn = Hinglish: Hindi written in Roman letters, mixed with English the way people text in India.
+Language = Literal["en-US", "hi-IN", "hi-Latn", "th-TH", "ja-JP", "ko-KR"]
 
 # No 0/O, 1/l/I — the elder may have to type this off a phone screen.
 _PASSWORD_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
@@ -42,6 +43,9 @@ class ElderCredentials(BaseModel):
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_elder(body: ElderCreate, caretaker: Caretaker) -> ElderCredentials:
+    ratelimit.account_writes.check(caretaker.uid)
+    if caretaker.sandbox:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not available in the sandbox")
     email = f"elder-{uuid.uuid4()}@{get_settings().elder_email_domain}"
     password = generate_temp_password()
     record = fb_auth.create_user(
@@ -96,6 +100,8 @@ class ElderProfile(BaseModel):
     language: Language
     sharingTier: str
     assessment: Assessment | None
+    # Names only (no emails/phones) so the elder's app can say "Samarth set this up for you".
+    caretakerNames: list[str] = []
 
 
 def _assessment_from(elder: dict[str, Any], rules: dict[str, Any]) -> Assessment | None:
@@ -132,7 +138,10 @@ def list_my_elders(caretaker: Caretaker) -> list[ElderSummary]:
 @router.get("/{elder_id}")
 def get_elder(elder_id: str, user: CurrentUser) -> ElderProfile:
     elder = load_elder(user, elder_id)
-    rules_snap = firebase.get_db().collection("rules").document(elder_id).get()
+    db = firebase.get_db()
+    rules_snap = db.collection("rules").document(elder_id).get()
+    refs = [db.collection("caretakers").document(uid) for uid in elder.get("caretakerIds", [])]
+    names = [str((snap.to_dict() or {}).get("name") or "") for snap in db.get_all(refs) if snap.exists] if refs else []
     return ElderProfile(
         elderId=elder_id,
         name=elder["name"],
@@ -140,6 +149,7 @@ def get_elder(elder_id: str, user: CurrentUser) -> ElderProfile:
         language=elder["language"],
         sharingTier=elder.get("sharingTier", "daily_summary"),
         assessment=_assessment_from(elder, rules_snap.to_dict() or {}),
+        caretakerNames=[n for n in names if n],
     )
 
 

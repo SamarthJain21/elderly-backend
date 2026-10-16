@@ -8,7 +8,7 @@ from firebase_admin import auth as fb_auth
 from google.cloud.firestore import ArrayUnion
 from pydantic import BaseModel, Field
 
-from app import contacts, firebase
+from app import contacts, firebase, ratelimit
 from app.access import load_elder
 from app.auth import CurrentUser
 from app.contacts import Contact, ContactIn, HelpRequest
@@ -96,6 +96,9 @@ class InviteResult(BaseModel):
 def invite_caretaker(elder_id: str, body: Invite, user: CurrentUser) -> InviteResult:
     """Existing caretaker → added now. Otherwise → pending invite, attached when they first sign in with Google."""
     load_elder(user, elder_id, caretaker_only=True)
+    ratelimit.account_writes.check(user.uid)
+    if user.sandbox:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not available in the sandbox")
     email = body.email.strip().lower()
     db = firebase.get_db()
     try:
