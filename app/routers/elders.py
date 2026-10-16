@@ -115,8 +115,9 @@ def _assessment_from(elder: dict[str, Any], rules: dict[str, Any]) -> Assessment
         meals=Meals(**elder.get("meals", {})),
         medications=[Medication(**m) for m in elder.get("medicationSchedule", [])],
         checkIn=CheckInSchedule(
+            enabled=rules.get("checkInEnabled", True),
             time=rules.get("checkInTime", "09:00"),
-            days=rules.get("checkInDays", CheckInSchedule().days),
+            days=rules.get("checkInDays") or CheckInSchedule().days,
         ),
         healthNotes=elder.get("healthNotes", ""),
     )
@@ -173,6 +174,7 @@ def save_assessment(elder_id: str, body: Assessment, user: CurrentUser) -> Asses
     })
     batch.set(db.collection("rules").document(elder_id), {
         "checkInTime": body.checkIn.time,
+        "checkInEnabled": body.checkIn.enabled,
         "checkInDays": body.checkIn.days,
     }, merge=True)
 

@@ -98,3 +98,31 @@ def test_check_in_opener_is_in_the_elders_language() -> None:
     assert checkin_opener("hi-Latn", "bad") == "Aaj tabiyat theek nahi hai"
     assert checkin_opener("ja-JP", "good") == "I'm feeling good"   # no translation yet → English
     assert checkin_opener("hi-IN", None) == "आज का हाल बताना है"
+
+
+def test_a_skipped_daily_check_in_has_no_days(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from app import checkin_store
+
+    class Doc:
+        def __init__(self, d: dict) -> None:  # type: ignore[type-arg]
+            self._d = d
+
+        def get(self) -> "Doc":
+            return self
+
+        def to_dict(self) -> dict:  # type: ignore[type-arg]
+            return self._d
+
+    class DB:
+        def __init__(self, d: dict) -> None:  # type: ignore[type-arg]
+            self.d = d
+
+        def collection(self, _: str) -> "DB":
+            return self
+
+        def document(self, _: str) -> Doc:
+            return Doc(self.d)
+    monkeypatch.setattr(checkin_store, "_db", lambda: DB({"checkInTime": "09:00", "checkInDays": ["mon"], "checkInEnabled": False}))
+    assert checkin_store.schedule_of("e1") == ("09:00", [])
+    monkeypatch.setattr(checkin_store, "_db", lambda: DB({"checkInTime": "09:00", "checkInDays": ["mon"]}))
+    assert checkin_store.schedule_of("e1") == ("09:00", ["mon"])

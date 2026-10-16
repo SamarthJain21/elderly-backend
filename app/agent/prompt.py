@@ -50,8 +50,10 @@ def _context(elder: dict[str, Any], today: list[Reminder], now_utc: dt.datetime)
         now_hhmm = f"{local:%H:%M}"
         lines.append(f"- Their local time is {local:%A %d %B %Y, %H:%M} ({tz}).")
     sleep = elder.get("sleep")
-    if sleep:
-        lines.append(f"- Usually wakes at {sleep['wakeTime']} and goes to bed at {sleep['bedtime']}.")
+    if sleep and sleep.get("wakeTime"):
+        lines.append(f"- Usually wakes at {sleep['wakeTime']}.")
+    if sleep and sleep.get("bedtime"):
+        lines.append(f"- Usually goes to bed at {sleep['bedtime']}.")
     meds = elder.get("medicationSchedule") or []
     if meds:
         med_text = "; ".join(

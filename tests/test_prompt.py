@@ -29,3 +29,8 @@ def test_hinglish_elder_gets_roman_script_hindi() -> None:
 
 def test_emergency_tool_is_never_described_as_calling_an_ambulance() -> None:
     assert "never say you called an ambulance" in build_system_prompt({"name": "Rose"}, [], NOW)
+
+
+def test_skipped_sleep_times_are_simply_not_mentioned() -> None:
+    p = build_system_prompt({"name": "Rose", "sleep": {"wakeTime": "06:30", "bedtime": None}}, [], NOW)
+    assert "Usually wakes at 06:30." in p and "goes to bed" not in p
