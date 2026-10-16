@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app import firebase
 from app.auth import CurrentUser, Role
+from app.routers.admin_api import is_admin
 from app.validation import Name
 
 router = APIRouter(tags=["auth"])
@@ -15,6 +16,7 @@ class Me(BaseModel):
     uid: str
     email: str | None
     role: Role
+    admin: bool = False  # can open the cost dashboard
 
 
 @router.get("/me")
@@ -22,7 +24,7 @@ def get_me(user: CurrentUser) -> Me:
     if user.role is None:
         # Signed in but not onboarded: frontend routes to /onboarding.
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not onboarded")
-    return Me(uid=user.uid, email=user.email, role=user.role)
+    return Me(uid=user.uid, email=user.email, role=user.role, admin=is_admin(user.email))
 
 
 class CaretakerSignup(BaseModel):

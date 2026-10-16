@@ -14,6 +14,7 @@ from google.oauth2 import service_account
 from pydantic import BaseModel, Field
 
 from app.checkin import Extracted
+from app import usage
 from app.config import get_settings
 
 
@@ -87,7 +88,9 @@ class GeminiChatModel:
         self._hedge_after = hedge_after_s
 
     async def _call(self, model: str, contents: list[types.Content], config: types.GenerateContentConfig) -> types.GenerateContentResponse:
-        return await asyncio.wait_for(self._hedged(model, contents, config), self._timeout)
+        r = await asyncio.wait_for(self._hedged(model, contents, config), self._timeout)
+        usage.gemini(model, r, "chat")
+        return r
 
     async def _hedged(self, model: str, contents: list[types.Content], config: types.GenerateContentConfig) -> types.GenerateContentResponse:
         """First answer wins. A second identical request starts only if the first hasn't answered in time."""

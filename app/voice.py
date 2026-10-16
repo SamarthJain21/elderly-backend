@@ -11,6 +11,7 @@ import google.auth
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2 import service_account
 
+from app import usage
 from app.config import get_settings
 
 # One warm, unhurried female voice per language ("Sulafat" is described by Google as warm).
@@ -66,6 +67,7 @@ def to_devanagari(text: str) -> str:
         model=get_settings().gemini_model, contents=text,
         config=types.GenerateContentConfig(system_instruction=_TO_DEVANAGARI, temperature=0),
     )
+    usage.gemini(get_settings().gemini_model, r, "hinglish-voice")
     return (r.text or "").strip() or text
 
 
@@ -83,6 +85,7 @@ def synthesize(text: str, language: str) -> bytes:
         "audioConfig": {"audioEncoding": "MP3", "speakingRate": SPEAKING_RATE},
     }, timeout=10)
     r.raise_for_status()
+    usage.add("tts-chirp3-hd", chars=len(spoken), calls=1)
     audio = base64.b64decode(r.json()["audioContent"])
     _cache[key] = audio
     if len(_cache) > _CACHE_SIZE:

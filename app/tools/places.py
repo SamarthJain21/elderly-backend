@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app import usage
 from app.voice import _session  # same authorised Google session (service account locally, Cloud Run identity in prod)
 
 _BASE = "https://places.googleapis.com/v1"
@@ -17,6 +18,7 @@ def autocomplete(text: str, country: str | None, session: str | None) -> list[di
         body["sessionToken"] = session  # groups keystrokes + the final lookup into one billed session
     r = _session().post(f"{_BASE}/places:autocomplete", json=body, timeout=8)
     r.raise_for_status()
+    usage.add("places-autocomplete", calls=1)
     out = []
     for s in r.json().get("suggestions", []):
         p = s.get("placePrediction")
@@ -33,6 +35,7 @@ def details(place_id: str, session: str | None = None) -> dict[str, Any]:
     r = _session().get(f"{_BASE}/places/{place_id}", params=params, timeout=8,
                        headers={"X-Goog-FieldMask": "addressComponents,location,formattedAddress"})
     r.raise_for_status()
+    usage.add("places-details", calls=1)
     d = r.json()
     comp: dict[str, str] = {}
     for c in d.get("addressComponents", []):
