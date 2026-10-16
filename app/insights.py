@@ -80,27 +80,36 @@ _WORDS = {
 }
 
 
+def _off_at(values: list[float | None], i: int, signal: str) -> bool:
+    base_vals = [x for x in values[max(0, i - BASELINE_DAYS):i] if x is not None]
+    v = values[i]
+    return v is not None and len(base_vals) >= MIN_BASELINE and _is_off(v, mean(base_vals), signal)  # type: ignore[arg-type]
+
+
 def detect_drift(checkins: list[CheckIn], today: dt.date) -> list[Drift]:
-    """Signals whose most recent days (up to and including today, or yesterday if today isn't done) deviate
-    from the previous 7 days' baseline for CONSECUTIVE+ days in a row."""
+    """Signals whose most recent days deviate from the previous 7 days' baseline for CONSECUTIVE+ days in a row.
+
+    Judged on complete days up to yesterday. Today can only extend a run (another off day) — one good answer today
+    isn't a trend, so it doesn't clear a drift until tomorrow (and a not-yet-done check-in never counts as missed)."""
     by_day = {c.date: c for c in checkins}
-    # Don't count today as "missed" before the elder has had a chance to check in.
-    end = today if (c := by_day.get(today)) is not None and c.status == "done" else today - dt.timedelta(days=1)
+    today_done = (c := by_day.get(today)) is not None and c.status == "done"
+    end = today if today_done else today - dt.timedelta(days=1)
     window = [end - dt.timedelta(days=i) for i in range(BASELINE_DAYS + 6, -1, -1)]  # oldest → newest
     drifts: list[Drift] = []
     for signal in ("mood", "sleep", "medication", "checkins"):
         values = _series(by_day, window, signal)  # type: ignore[arg-type]
         run = 0
         for i in range(len(window) - 1, -1, -1):  # walk back from the newest day
-            v = values[i]
-            base_vals = [x for x in values[max(0, i - BASELINE_DAYS):i] if x is not None]
-            if v is None or len(base_vals) < MIN_BASELINE:
-                break
-            if not _is_off(v, mean(base_vals), signal):  # type: ignore[arg-type]
+            off = _off_at(values, i, signal)
+            if window[i] == today and not off:
+                continue  # today looks fine (or incomplete): judge the trend on the days before it
+            if not off:
                 break
             run += 1
         if run >= CONSECUTIVE:
-            since = window[len(window) - run]
+            # The run's oldest day: count back over the days that were off (today may have been skipped).
+            newest = len(window) - 1 - (1 if window[-1] == today and not _off_at(values, len(window) - 1, signal) else 0)
+            since = window[newest - run + 1]
             drifts.append(Drift(signal=signal, days=run, since=since, detail=f"{_WORDS[signal]} for {run} days"))  # type: ignore[arg-type]
     return drifts
 

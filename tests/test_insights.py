@@ -66,3 +66,16 @@ def test_week_stats_and_trend() -> None:
     assert w.checkinsDone == 7 and w.moodAvg == 2.0 and w.moodTrend == "down"
     assert w.medsTakenPct == 57 and w.sleptWellPct == 0 and w.concerns == ["knee pain"]
     assert assess_insights(data, TODAY).status == "concern"
+
+
+def test_a_good_check_in_today_does_not_clear_a_drift_until_tomorrow() -> None:
+    data = steady(range(3, 14)) + [ci(2, mood="low"), ci(1, mood="low"), ci(0, mood="good")]
+    drifts = detect_drift(data, TODAY)
+    assert [(d.signal, d.days, d.since) for d in drifts] == [("mood", 2, TODAY - dt.timedelta(days=2))]
+    tomorrow = data + [ci(-1, mood="good")]  # a second good day: the run before it no longer reaches today
+    assert detect_drift(tomorrow, TODAY + dt.timedelta(days=1)) == []
+
+
+def test_another_low_day_today_extends_the_drift() -> None:
+    data = steady(range(3, 14)) + [ci(2, mood="low"), ci(1, mood="low"), ci(0, mood="low")]
+    assert [(d.days, d.since) for d in detect_drift(data, TODAY)] == [(3, TODAY - dt.timedelta(days=2))]

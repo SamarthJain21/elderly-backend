@@ -26,6 +26,8 @@ class ContactIn(BaseModel):
     skills: list[str] = Field(default_factory=list, max_length=10)  # for volunteers: plumbing, tech help…
     trusted: bool = False
     email: str = Field(default="", max_length=200)
+    # Illustration key for people without a photo (e.g. "emma"); the app shows initials when unset.
+    face: str | None = Field(default=None, max_length=20)
 
     @field_validator("skills")
     @classmethod

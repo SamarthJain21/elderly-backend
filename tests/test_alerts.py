@@ -60,6 +60,8 @@ def test_sos_alerts_family_texts_contacts_and_gives_emergency_number(env: dict[s
     assert "pressed the SOS button" in env["texts"][0][1] and "12 MG Road" in env["texts"][0][1]
     assert env["logs"][-1].kind == "alert"
     assert env["pushed"][0]["type"] == "alert" and env["pushed"][0]["alert"]["status"] == "active"
+    # SMS isn't configured in tests: the family's log says so plainly, once, not per person.
+    assert env["logs"][-1].message.endswith("Lakshmi (neighbour) and Ravi are not texted yet — SMS isn't switched on.")
 
 
 def test_pressing_twice_does_not_create_a_second_alert(env: dict[str, Any]) -> None:
@@ -127,3 +129,8 @@ def test_elder_profile_includes_caretaker_names_but_no_contact_details(monkeypat
         app.dependency_overrides.clear()
     assert body["caretakerNames"] == ["Samarth", "Priya"]
     assert "s@example.com" not in str(body)
+
+
+def test_names_reads_naturally() -> None:
+    assert [alerts.names(x) for x in (["Emma"], ["Emma", "Tom"], ["Emma", "Tom", "David"])] == \
+        ["Emma", "Emma and Tom", "Emma, Tom and David"]

@@ -79,8 +79,8 @@ def test_endpoint_is_rate_limited_per_visitor(client: TestClient, monkeypatch: p
         warmed.append(city)
     monkeypatch.setattr(sandbox_api, "get_weather", fake_weather)
     ip = {"X-Forwarded-For": "203.0.113.7, 10.0.0.1"}
-    codes = [client.post("/demo/sandbox", json={"language": "th-TH"}, headers=ip).status_code for _ in range(6)]
-    assert codes == [201] * 5 + [429]
+    codes = [client.post("/demo/sandbox", json={"language": "th-TH"}, headers=ip).status_code for _ in range(21)]
+    assert codes == [201] * 20 + [429]
     assert client.post("/demo/sandbox", json={}, headers={"X-Forwarded-For": "198.51.100.1"}).status_code == 201
     assert made[-1] == "en-US"
     assert "Bangkok" in warmed and "Pune" in warmed  # each new sandbox pre-loads its city's weather
@@ -117,3 +117,8 @@ def test_cleanup_never_erases_a_real_elder(monkeypatch: pytest.MonkeyPatch) -> N
 def test_checkin_is_due_when_the_visitor_arrives() -> None:
     now = dt.datetime(2026, 10, 16, 8, 52, tzinfo=dt.UTC)  # 15:52 in Bangkok
     assert sandbox.checkin_time(now, "Asia/Bangkok") == "15:45"
+
+
+def test_every_persona_face_is_an_illustration_the_app_has() -> None:
+    known = {"rose", "emma", "tom", "mia", "david", "lewis", "alex", "ben"}  # elderly-frontend components/Face.tsx
+    assert all(set(p.faces) <= known for p in sandbox.PERSONAS.values())
