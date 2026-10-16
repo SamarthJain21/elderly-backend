@@ -5,6 +5,8 @@ used if the model can't be reached after side effects already happened.
 """
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import datetime as dt
 from dataclasses import dataclass, field
@@ -23,6 +25,8 @@ from app.tools import actions, providers
 from app.tools.actions import Action
 from app.tools.geo import geocode, km_between, maps_link, uber_link
 from app.tools.weather import get_weather
+
+log = logging.getLogger(__name__)
 
 
 # Gemini function declarations (JSON Schema). `reply` is how the model talks; it must always call something.
@@ -309,13 +313,16 @@ async def run_tool(ctx: ToolContext, name: str, args: dict[str, Any]) -> dict[st
         return {"status": "ready_to_call", "name": person.name, "say": f"Tap the button to call {person.name}.",
                 "instruction": f"Tell them to tap the green button to call {person.name}."}
     if name == "check_weather":
-        city = str(args.get("city") or ctx.elder.get("city") or "").strip()
-        if not city:
+        # The model may name the city its own way ("Dilli"); fall back to the saved city before giving up.
+        cities = [c for c in dict.fromkeys((str(args.get("city") or "").strip(), str(ctx.elder.get("city") or "").strip())) if c]
+        if not cities:
             return {"status": "need_more_info", "instruction": "Ask which town or city they live in."}
-        try:
-            return {"status": "ok", **(await get_weather(city)).model_dump()}
-        except Exception:  # noqa: BLE001
-            return {"status": "unavailable", "instruction": "Say you couldn't check the weather just now."}
+        for city in cities:
+            try:
+                return {"status": "ok", **(await get_weather(city)).model_dump()}
+            except Exception:  # noqa: BLE001
+                log.warning("weather lookup failed for %r", city, exc_info=True)
+        return {"status": "unavailable", "instruction": "Say you couldn't check the weather just now."}
     if name == "escalate_emergency":
         desc = str(args.get("description", "Emergency"))[:300]
         # Same path as the SOS button: alert record, caretaker banners, texts to emergency contacts.

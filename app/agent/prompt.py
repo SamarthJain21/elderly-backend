@@ -77,7 +77,7 @@ def _context(elder: dict[str, Any], today: list[Reminder], now_utc: dt.datetime)
 CHIP_VOICE = (
     "Each chip is something the elder says TO YOU. Wrong (that's your voice, not theirs): greeting them, using their "
     "name or title (Khun, ji), asking about them, or reassuring them ('Help is coming', 'Your family knows'). "
-    "After an emergency, chips like: 'I pressed SOS', 'Call my daughter', 'I'm okay now'."
+    "After an emergency, chips meaning: 'I pressed SOS', 'Call my daughter', 'I'm okay now' — in THEIR language."
 )
 
 
