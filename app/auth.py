@@ -23,6 +23,7 @@ class AuthedUser:
     email: str | None
     provider: str
     role: Role | None
+    sandbox: bool = False  # a 'Try with real AI' account (app/sandbox.py)
 
 
 def authenticate(token: str) -> AuthedUser:
@@ -42,11 +43,13 @@ def authenticate(token: str) -> AuthedUser:
     if role not in ("elder", "caretaker", None):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Unknown role")
 
-    # Caretakers must use Google; a password login claiming caretaker is rejected.
-    if role == "caretaker" and provider != "google.com":
+    # Caretakers must use Google; a password login claiming caretaker is rejected — except sandbox caretakers,
+    # whose user doc only the server writes (app/sandbox.py).
+    sandbox = bool(doc and doc.get("sandbox"))
+    if role == "caretaker" and provider != "google.com" and not sandbox:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Caretakers must sign in with Google")
 
-    return AuthedUser(uid=uid, email=claims.get("email"), provider=provider, role=role)
+    return AuthedUser(uid=uid, email=claims.get("email"), provider=provider, role=role, sandbox=sandbox)
 
 
 def get_authed_user(

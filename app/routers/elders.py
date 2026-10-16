@@ -4,7 +4,7 @@ import secrets
 import uuid
 from typing import Any, Literal
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, HTTPException, status
 from firebase_admin import auth as fb_auth
 from google.cloud.firestore import SERVER_TIMESTAMP, ArrayUnion
 from google.cloud.firestore_v1.base_query import FieldFilter
@@ -43,6 +43,8 @@ class ElderCredentials(BaseModel):
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_elder(body: ElderCreate, caretaker: Caretaker) -> ElderCredentials:
     ratelimit.account_writes.check(caretaker.uid)
+    if caretaker.sandbox:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not available in the sandbox")
     email = f"elder-{uuid.uuid4()}@{get_settings().elder_email_domain}"
     password = generate_temp_password()
     record = fb_auth.create_user(
