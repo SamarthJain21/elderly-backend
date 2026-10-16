@@ -79,8 +79,8 @@ def test_endpoint_is_rate_limited_per_visitor(client: TestClient, monkeypatch: p
         warmed.append(city)
     monkeypatch.setattr(sandbox_api, "get_weather", fake_weather)
     ip = {"X-Forwarded-For": "203.0.113.7, 10.0.0.1"}
-    codes = [client.post("/demo/sandbox", json={"language": "th-TH"}, headers=ip).status_code for _ in range(6)]
-    assert codes == [201] * 5 + [429]
+    codes = [client.post("/demo/sandbox", json={"language": "th-TH"}, headers=ip).status_code for _ in range(21)]
+    assert codes == [201] * 20 + [429]
     assert client.post("/demo/sandbox", json={}, headers={"X-Forwarded-For": "198.51.100.1"}).status_code == 201
     assert made[-1] == "en-US"
     assert "Bangkok" in warmed and "Pune" in warmed  # each new sandbox pre-loads its city's weather

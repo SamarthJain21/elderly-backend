@@ -165,7 +165,7 @@ def create_sandbox(language: SandboxLanguage, now: dt.datetime | None = None) ->
         batch.set(db.collection("users").document(elder_id), {
             "role": "elder", "displayName": el.name, "email": el.email, "language": language,
             "createdAt": SERVER_TIMESTAMP, **sandbox})
-        emma_phone = _fake_phone()
+        emma_phone, son_phone = _fake_phone(), _fake_phone()
         batch.set(db.collection("elders").document(elder_id), {
             "uid": elder_id, "name": el.name, "phone": _fake_phone(), "language": language,
             "sharingTier": "daily_summary", "caretakerIds": [ct_uid], "baselineWindowDays": 7,
@@ -173,7 +173,9 @@ def create_sandbox(language: SandboxLanguage, now: dt.datetime | None = None) ->
             "sleep": {"bedtime": "22:00", "wakeTime": "06:30"},
             "meals": {"breakfast": "08:00", "lunch": "13:00", "dinner": "19:30"},
             "medicationSchedule": [m.model_dump() for m in meds], "healthNotes": p.health_notes,
-            "emergencyContacts": [{"name": ct.name, "phone": emma_phone, "relationship": p.relationship}],
+            # Elders see their emergency contacts as faces to call: two people, like a real family.
+            "emergencyContacts": [{"name": ct.name, "phone": emma_phone, "relationship": p.relationship},
+                                  {"name": p.son, "phone": son_phone, "relationship": "son"}],
             "assessedAt": SERVER_TIMESTAMP, "sandboxCaretakerId": ct_uid, **sandbox,
         })
         batch.set(db.collection("rules").document(elder_id), {"checkInTime": checkin_time(now, p.timezone),
@@ -182,7 +184,7 @@ def create_sandbox(language: SandboxLanguage, now: dt.datetime | None = None) ->
             batch.set(db.collection("reminders").document(r.id), r.model_dump(mode="json"))
         people = [
             Contact(name=ct.name, phone=emma_phone, kind="family", relationship=p.relationship, trusted=True),
-            Contact(name=p.son, phone=_fake_phone(), kind="family", relationship="son", trusted=True),
+            Contact(name=p.son, phone=son_phone, kind="family", relationship="son", trusted=True),
             Contact(name=p.neighbour, phone=_fake_phone(), kind="volunteer", relationship="neighbour",
                     skills=["plumbing", "shopping", "tech help"], trusted=True),
             Contact(name=p.doctor, phone=_fake_phone(), kind="doctor", relationship="doctor"),

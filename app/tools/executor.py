@@ -199,7 +199,7 @@ async def _ask_volunteer(a: Action, elder: dict[str, Any]) -> dict[str, Any]:
     a.status = "done"
     a.args = {**a.args, "label": f"{a.args['title']} — asked {vol.name}"}
     await _save(a)
-    how = "by text" if via == "sms" else "(text not sent — SMS not set up; shown here only)"
+    how = "by text" if via == "sms" else ("(no texts in this demo)" if elder.get("sandbox") else "(not texted yet — SMS isn't switched on)")
     await asyncio.to_thread(checkin_store.add_log, a.elderId, LogEntry(
         message=f"Asked {vol.name}{' ⭐' if vol.trusted else ''} to help with “{a.args['title']}” {how}.", kind="ok"))
     return {"status": "done", "volunteer": vol.name, "trusted": vol.trusted,
