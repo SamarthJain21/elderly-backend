@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:5173"]
     # Google accounts that can open the cost dashboard (/admin). Set ADMIN_EMAILS='["you@gmail.com"]'.
     admin_emails: list[str] = []
+    # Where notifications open the app.
+    app_url: str = "https://elderly-3e18c.web.app"
     elder_email_domain: str = "elderly.app"
     # Gemini: AI Studio key if set (free tier); otherwise Vertex AI billed to firebase_project_id.
     gemini_api_key: SecretStr | None = None

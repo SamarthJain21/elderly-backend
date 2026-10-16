@@ -17,6 +17,7 @@ from app import alerts, checkin_store, contacts
 from app.alerts import EMERGENCY_NUMBER
 from app.autonomy import AutonomyRules, decide, format_money
 from app.contacts import Contact, HelpRequest, find_contact, pick_volunteer
+from app import push
 from app.sms import send_sms
 from app.checkin_store import LogEntry
 from app.agent import family, live
@@ -231,6 +232,7 @@ async def _gated(ctx: ToolContext, tool: str, args: dict[str, Any], quote: provi
         await _save(a)
         why = "it's above the spending limit" if over_limit else "the family asked to approve these first"
         await _log(ctx, f"Approval needed — {a.summary()} ({why})", "warn")
+        push.notify_family(ctx.elder, f"🔐 {ctx.name} needs your OK", a.summary(), "/caretaker/approvals")
         return {"status": "sent_to_family_for_approval", "details": a.summary(), "reason": why,
                 "say": "I've asked your family to approve this. I'll let you know.",
                 "instruction": "Tell them you've asked their family to approve it and you'll let them know."}
