@@ -36,3 +36,5 @@ account_writes = RateLimiter(10, 3600)
 # 'Try with real AI' sandboxes (no sign-in): per visitor IP, and a daily cap on the whole thing.
 sandbox_per_ip = RateLimiter(5, 3600)
 sandbox_global = RateLimiter(300, 86400)
+# Read-aloud clips: one per reply/message, plus replays.
+tts_calls = RateLimiter(60, 60)
