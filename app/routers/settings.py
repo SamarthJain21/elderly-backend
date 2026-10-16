@@ -11,6 +11,7 @@ from app.access import load_elder
 from app.auth import CurrentUser
 from app.autonomy import AutonomyRules, currency_for_timezone, default_rules
 from app.routers.elders import Language
+from app.tools import places
 from app.tools.geo import geocode_sync
 from app.validation import Name, Phone, ShortText
 
@@ -64,13 +65,23 @@ class Address(BaseModel):
     lng: float | None = None
     # How precisely we located it. "city" means only the town matched — don't use it as a pickup point.
     precision: Literal["address", "street", "city"] | None = None
+    # Set when the family picked the address from Google search: the server re-reads the place for its location.
+    placeId: str | None = Field(default=None, max_length=300)
 
     def one_line(self) -> str:
         return ", ".join(x for x in (self.line1, self.line2, self.landmark, self.city, self.postcode) if x)
 
 
 def _locate(a: Address, tz: str | None) -> Address:
-    """Best effort: try the full address, then without line2/landmark (OSM rarely knows flat numbers)."""
+    """Best effort. Picked from Google search → that place's exact location. Typed → try the full address, then
+    without line2/landmark (OSM rarely knows flat numbers)."""
+    if a.placeId:
+        try:
+            d = places.details(a.placeId)
+            if d.get("lat") is not None:
+                return a.model_copy(update={"lat": d["lat"], "lng": d["lng"], "precision": "address"})
+        except Exception:  # noqa: BLE001 — fall back to the typed address
+            pass
     attempts: list[tuple[str, Literal["address", "street", "city"]]] = [
         (a.one_line(), "address"),
         (", ".join(x for x in (a.line1, a.city, a.postcode) if x), "street"),
