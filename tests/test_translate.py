@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.agent import translate
@@ -29,3 +28,12 @@ def test_family_messages_arrive_in_the_receivers_language(store: Store, model: F
     m = f["message"]
     assert m["text"] == "हाँ, दवाई ले ली"                       # the original is kept
     assert m["translated"] == "[en-US] हाँ, दवाई ले ली" and m["translatedTo"] == "en-US"   # family reads English
+
+
+def test_writer_relationship_comes_from_the_elders_contacts():
+    from app.routers.chat import _writer
+    elder = {"emergencyContacts": [{"name": "Priya Sharma", "relationship": "daughter"}, {"name": "Ravi", "relationship": ""}]}
+    assert _writer(elder, "priya") == "priya (daughter)"
+    assert _writer(elder, "Ravi") == "Ravi"            # no relationship → name only, gender not guessed
+    assert _writer(elder, "Family") == "Family"
+    assert _writer({}, "") == ""

@@ -101,12 +101,21 @@ def frame_error(kind: str | None, raw: object, exc: ValidationError) -> str:
     return "Sorry, that didn't go through. Please try again."
 
 
-def _safe_translate(text: str, target: str, source: str | None = None) -> str | None:
+def _safe_translate(text: str, target: str, source: str | None, writer: str | None) -> str | None:
     try:
-        return translate.translate(text, target, source)
+        return translate.translate(text, target, source, writer)
     except Exception:  # noqa: BLE001 — the original is always shown
         log.warning("family translation failed", exc_info=True)
         return None
+
+
+def _writer(elder: dict, name: str) -> str:
+    """"Priya (daughter)" when the elder's contacts name her with a relationship — for gendered languages."""
+    first = name.casefold().split()[:1]
+    for c in elder.get("emergencyContacts") or []:
+        if first and str(c.get("name", "")).casefold().split()[:1] == first and c.get("relationship"):
+            return f"{name} ({c['relationship']})"
+    return name
 
 
 class TextFrame(BaseModel):
@@ -400,9 +409,10 @@ class Session:
         to_caretaker = self.user.role != "caretaker"
         elder_lang = elder.get("language", "en-US")
         target, source = ("en-US", elder_lang) if to_caretaker else (elder_lang, None)  # family may write any language
-        tr = asyncio.create_task(asyncio.to_thread(_safe_translate, text, target, source))
+        name = await asyncio.to_thread(family.caretaker_name, self.user.uid) if not to_caretaker else ""
+        writer = _writer(elder, name) if not to_caretaker else None
+        tr = asyncio.create_task(asyncio.to_thread(_safe_translate, text, target, source, writer))
         if self.user.role == "caretaker":
-            name = await asyncio.to_thread(family.caretaker_name, self.user.uid)
             msg = FamilyMessage(sender="caretaker", senderUid=self.user.uid, senderName=name, text=text,
                                 chips=await self._make_chips(elder, True, name, text))
         else:

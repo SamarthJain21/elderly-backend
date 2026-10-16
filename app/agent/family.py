@@ -46,7 +46,10 @@ def _col(elder_id: str):  # noqa: ANN202
 
 
 def save(elder_id: str, msg: FamilyMessage) -> None:
-    _col(elder_id).document(msg.id).set(msg.model_dump())
+    doc = msg.model_dump()
+    # Chips may hold a datetime.date (a remind-on-Sunday chip), which Firestore can't store; keep createdAt a timestamp.
+    doc["chips"] = [c.model_dump(mode="json") for c in msg.chips]
+    _col(elder_id).document(msg.id).set(doc)
 
 
 def get(elder_id: str, msg_id: str) -> FamilyMessage | None:
