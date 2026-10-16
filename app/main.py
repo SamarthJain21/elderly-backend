@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import voice_api  # natural read-aloud voice
 from app.routers import places_api  # address search
+from app.routers import medicines_api  # medicine-name check
 from app.routers import sandbox_api  # 'Try with real AI' (own line: keeps feature branches from colliding)
 from app.config import get_settings
 from app.routers import alerts_api, approvals, insights_api, chat, checkins, elders, me, people, reminders, settings
@@ -32,6 +33,7 @@ app.include_router(reminders.router)
 app.include_router(chat.router)
 app.include_router(voice_api.router)
 app.include_router(places_api.router)
+app.include_router(medicines_api.router)
 app.include_router(checkins.router)
 app.include_router(settings.router)
 app.include_router(approvals.router)
