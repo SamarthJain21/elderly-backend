@@ -34,6 +34,7 @@ def check(name: str, country: str) -> MedicineCheck:
     )
     out = MedicineCheck.model_validate_json(r.text or "{}") if r.text else MedicineCheck(input=name, recognised=False)
     # Don't echo the input back as a "suggestion" or a brand as its own generic.
-    sug = out.suggestion if out.suggestion and out.suggestion.strip().lower() != name.strip().lower() else None
+    # …nor a shortened copy of it ("Telma 40" → "Telma" just drops the strength).
+    sug = out.suggestion if out.suggestion and out.suggestion.strip().lower() not in name.strip().lower() else None
     gen = out.generic if out.generic and out.generic.strip().lower() not in (name.strip().lower(), (sug or "").lower()) else None
     return MedicineCheck(input=name, recognised=out.recognised, suggestion=sug, generic=gen)

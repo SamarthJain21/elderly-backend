@@ -36,3 +36,9 @@ def test_repeated_names_are_answered_from_the_cache(monkeypatch: pytest.MonkeyPa
     calls = fake_gemini(monkeypatch, '{"input":"x","recognised":false}')
     medicines.check("Zzz", "India"); medicines.check("Zzz", "India")
     assert len(calls) == 1
+
+
+def test_dropping_the_strength_is_not_a_spelling_suggestion(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_gemini(monkeypatch, '{"input":"Telma 40","recognised":true,"suggestion":"Telma","generic":"Telmisartan"}')
+    r = medicines.check("Telma 40", "India")
+    assert (r.suggestion, r.generic) == (None, "Telmisartan")
