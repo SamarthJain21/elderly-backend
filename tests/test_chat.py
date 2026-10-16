@@ -397,6 +397,21 @@ def test_order_within_limit_asks_elder_then_tap_yes_places_it(store: Store) -> N
     assert any(l.message.startswith("Done — Food order") for l in store.logs)
 
 
+def test_elder_sees_which_action_is_running_before_the_reply(store: Store) -> None:
+    _with_model(FakeModel(tool_calls=[("check_weather", {})]))
+    try:
+        with TestClient(app).websocket_connect("/ws/e1") as ws:
+            _connect(ws)
+            ws.send_json({"type": "message", "text": "will it rain?"})
+            frames = []
+            while not (frames and frames[-1]["type"] == "message" and frames[-1]["message"]["sender"] == "agent"):
+                frames.append(ws.receive_json())
+    finally:
+        app.dependency_overrides.clear()
+    typing = [f for f in frames if f["type"] == "typing"]
+    assert typing[0] == {"type": "typing"} and typing[-1] == {"type": "typing", "tool": "check_weather"}
+
+
 def test_tap_no_cancels_and_cannot_be_reused(store: Store) -> None:
     _with_model(FakeModel(tool_calls=[("order_food", {"items": ["idli"]})]))
     try:

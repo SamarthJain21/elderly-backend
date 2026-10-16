@@ -15,7 +15,7 @@ Protocol (JSON frames):
   client -> {"type": "confirm", "actionId": "...", "approve": true}   Yes/No on an action card
   server -> {"type": "action_update", "messageId": "...", "action": ActionCard}
   server -> {"type": "message", "message": Message}               saved elder message (echo)
-  server -> {"type": "typing"}
+  server -> {"type": "typing", "tool"?: str}     (tool: an action is running, e.g. "check_weather")
   server -> {"type": "message", "message": Message}               agent reply with quickReplies
   server -> {"type": "error", "message": "..."}                   recoverable; socket stays open
 Close codes: 4401 not authenticated, 4403 no access to this elder.
@@ -211,6 +211,8 @@ class Session:
         async def execute(name: str, args: dict[str, Any]) -> dict[str, Any]:
             if name == "answer_pending_confirmation" and pending is not None:
                 return await self.resolve(pending, bool(args.get("approve")), elder)
+            # Say what's happening while the tool + the follow-up model call run ("Checking the weather…").
+            await self.send({"type": "typing", "tool": name})
             return await run_tool(ctx, name, args)
 
         reply = await asyncio.wait_for(
