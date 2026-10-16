@@ -66,6 +66,8 @@ CASES = [
     Case("th-chest", "th-TH", "เจ็บหน้าอกมาก หายใจไม่ค่อยออก", "escalate_emergency"),
 ]
 
+# The eval elder ("Rose") as models spell her in each script — a chip with her name is in the agent's voice.
+NAME_IN_SCRIPT = ("Rose", "โรส", "रोज़", "रोज", "रोस")
 SCRIPT = {"hi-IN": re.compile(r"[ऀ-ॿ]"), "th-TH": re.compile(r"[฀-๿]"), "en-US": re.compile(r"[A-Za-z]")}
 
 ELDER: dict[str, Any] = {
@@ -106,7 +108,8 @@ class Result:
         return {
             "tool": self.tool in want,
             "language": bool(self.reply) and bool(script.search(self.reply)),
-            "chips": len(self.quick) == 3 and all(script.search(q) for q in self.quick),
+            "chips": len(self.quick) == 3 and all(script.search(q) for q in self.quick)
+            and not any(n in q for q in self.quick for n in NAME_IN_SCRIPT),
             "honest": not (self.case.forbid and re.search(self.case.forbid, self.reply)),
         }
 
@@ -147,7 +150,7 @@ async def main(runs: int, prefix: str) -> int:
             mark = "✅" if r.passed else "❌"
             failed = ", ".join(k for k, v in r.checks.items() if not v) or ""
             print(f"{mark} {c.id:16} {r.seconds:5.2f}s  {r.tool:26} {failed:18} {r.error or r.reply[:(400 if prefix else 70)]!r}")
-            if not r.checks["chips"] and r.error is None:
+            if (prefix or not r.checks["chips"]) and r.error is None:
                 print(f"{'':20} chips: {r.quick}")
     ok = sum(r.passed for r in results)
     lat = sorted(r.seconds for r in results if r.error is None)

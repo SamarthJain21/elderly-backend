@@ -72,6 +72,13 @@ def _context(elder: dict[str, Any], today: list[Reminder], now_utc: dt.datetime)
     return lines
 
 
+CHIP_VOICE = (
+    "Each chip is something the elder says TO YOU. Wrong (that's your voice, not theirs): greeting them, using their "
+    "name or title (Khun, ji), asking about them, or reassuring them ('Help is coming', 'Your family knows'). "
+    "After an emergency, chips like: 'I pressed SOS', 'Call my daughter', 'I'm okay now'."
+)
+
+
 def clean_quick_replies(options: list[str], elder_name: str) -> list[str]:
     """Drop chips written in the agent's voice: an elder doesn't say their own name ("Are you sleeping late, Rose?")."""
     first = elder_name.split()[0].lower() if elder_name.strip() else ""
@@ -96,12 +103,12 @@ def build_system_prompt(
         "convert, translate or rename a currency, even when replying in another language.",
         "- awaiting_elder_confirmation → say what it is and the price, ask them to tap Yes or No.",
         "- sent_to_family_for_approval → say their family will approve it soon. not_allowed → kindly say you can't.",
-    "- ready_to_call → the call has NOT started: tell them to tap the green call button to phone that person.",
+        "- ready_to_call → the call has NOT started: tell them to tap the green call button to phone that person.",
         "- Emergencies (fall, chest pain, breathing trouble, bleeding, fainting): call escalate_emergency at once.",
         "",
         f"Quick replies: exactly 3 short options the ELDER would tap to answer you — written in their own voice "
         f"(first person, max 5 words, in {language} even if they wrote in another language), e.g. 'I slept well', 'Tell me more', 'What's the weather?'. "
-        "Never write them as your questions to the elder, and never include the elder's name.",
+        + CHIP_VOICE,
     ]
     if pending:
         lines += ["", f"Waiting for their Yes/No right now: {pending}. If they answer it, call answer_pending_confirmation."]
@@ -148,7 +155,8 @@ def build_checkin_prompt(elder: dict[str, Any], c: CheckIn, today: list[Reminder
         "If they don't want to answer, accept kindly and move on.",
         "",
         f"Quick replies: exactly 3 short answers (max 5 words, in {language}) to the question YOU just asked — "
-        "e.g. for sleep: slept well / woke up a lot / barely slept. If the check-in is done, 3 friendly follow-ups.",
+        "e.g. for sleep: slept well / woke up a lot / barely slept. If the check-in is done, 3 friendly follow-ups. "
+        + CHIP_VOICE,
         "",
         _EXTRACT_RULES,
     ]
