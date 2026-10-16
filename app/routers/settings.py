@@ -1,12 +1,15 @@
 """Caretaker-managed settings for one elder: autonomy rules and profile."""
 from __future__ import annotations
 
+import asyncio
+
 from typing import Any, Literal
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from app import firebase
+from app.agent import live
 from app.access import load_elder
 from app.auth import CurrentUser
 from app.autonomy import AutonomyRules, currency_for_timezone, default_rules
@@ -39,10 +42,12 @@ def get_rules(elder_id: str, user: CurrentUser) -> AutonomyRules:
 
 
 @router.put("/rules")
-def put_rules(elder_id: str, body: AutonomyRules, user: CurrentUser) -> AutonomyRules:
-    load_elder(user, elder_id, caretaker_only=True)
+async def put_rules(elder_id: str, body: AutonomyRules, user: CurrentUser) -> AutonomyRules:
+    await asyncio.to_thread(load_elder, user, elder_id, caretaker_only=True)
     # merge=True keeps the check-in schedule that lives in the same document.
-    firebase.get_db().collection("rules").document(elder_id).set(body.model_dump(), merge=True)
+    await asyncio.to_thread(lambda: firebase.get_db().collection("rules").document(elder_id).set(body.model_dump(), merge=True))
+    # The elder's app hides the big buttons for anything switched off — tell open apps now.
+    await live.broadcast(elder_id, {"type": "rules", "rules": body.model_dump(mode="json")}, "agent")
     return body
 
 
