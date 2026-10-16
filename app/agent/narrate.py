@@ -6,7 +6,7 @@ import datetime as dt
 import logging
 from typing import Any
 
-from app.agent import live, messages
+from app.agent import live, messages, voice_push
 from app.agent.llm import AgentReply, ChatModel, Turn
 from app.agent.messages import Message
 from app.agent.prompt import build_system_prompt
@@ -35,12 +35,15 @@ async def narrate(model: ChatModel, elder: dict[str, Any], elder_id: str, event:
     )
     # Gemini needs the conversation to end on a user turn; the update itself is in the system prompt.
     turns.append(Turn("elder", "(no new message from me — please tell me the update)"))
+    spoken: str | None = None
     try:
         reply = await asyncio.wait_for(model.complete(system, turns, AgentReply), MODEL_TIMEOUT_S)
         msg = Message(sender="agent", text=reply.reply, quickReplies=reply.quickReplies)
+        spoken = reply.spoken
     except Exception:  # noqa: BLE001 — the event already happened; say it plainly rather than not at all
         log.exception("narration failed for elder %s", elder_id)
         msg = Message(sender="agent", text=fallback)
+    voice_push.speak_reply(elder_id, elder, msg.id, msg.text, spoken)
     await asyncio.to_thread(messages.save, elder_id, msg)
     await live.broadcast(elder_id, {"type": "message", "message": msg.model_dump(mode="json")})
     return msg

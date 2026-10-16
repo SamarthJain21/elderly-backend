@@ -26,3 +26,10 @@ def _fresh_rate_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ratelimit, "sandbox_per_ip", ratelimit.RateLimiter(20, 3600))
     monkeypatch.setattr(ratelimit, "sandbox_global", ratelimit.RateLimiter(300, 86400))
     monkeypatch.setattr(ratelimit, "tts_calls", ratelimit.RateLimiter(60, 60))
+
+
+@pytest.fixture(autouse=True)
+def _no_voice_push(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Chat tests count frames and must not call Text-to-Speech; tests/test_voice_push.py covers the push itself."""
+    from app.agent import voice_push
+    monkeypatch.setattr(voice_push, "speak_reply", lambda *a, **k: None)

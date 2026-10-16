@@ -12,7 +12,9 @@ LANGUAGE_NAMES = {
     "en-US": "English",
     "hi-IN": "Hindi (Devanagari script)",
     "hi-Latn": ("Hinglish — Hindi written in Roman (English) letters, mixing in English words the way people in India "
-                "text, e.g. 'Namaste ji! Aapki dawai 8 baje hai, le li kya?'. Never use Devanagari script"),
+                "text, e.g. 'Namaste ji! Aapki dawai 8 baje hai, le li kya?'. Never use Devanagari script in the text. "
+                "Also fill `spoken` with the same words in Devanagari (English words as a Hindi speaker says them, "
+                "e.g. 'medicine' → 'मेडिसिन'), for the voice"),
     "th-TH": "Thai",
     "ja-JP": "Japanese",
     "ko-KR": "Korean",
