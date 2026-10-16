@@ -45,6 +45,8 @@ class Persona:
     son: str
     doctor: str
     health_notes: str
+    # Illustrations (components/Face.tsx) for elder, caretaker, son, neighbour, doctor — chosen to fit each person.
+    faces: tuple[str, str, str, str, str] = ("rose", "emma", "tom", "david", "lewis")
 
 
 PERSONAS: dict[SandboxLanguage, Persona] = {
@@ -63,6 +65,7 @@ PERSONAS: dict[SandboxLanguage, Persona] = {
         (("Amlodipine", "5mg", ("08:00", "20:00"), True), ("Metformin", "500mg", ("08:00",), True)),
         ("poha and chai", "dal, roti and sabzi", "khichdi", "paratha and curd"),
         "Mr Gupta", "Rahul", "Dr Mehta", "High blood pressure and type 2 diabetes. Walks slowly on stairs.",
+        ("rose", "mia", "tom", "david", "lewis"),
     ),
     "hi-Latn": Persona(  # Hinglish: same household as Hindi; the helper writes Roman-script Hindi
         "Kamla", "Priya", "daughter", "Asia/Kolkata", "New Delhi",
@@ -71,6 +74,7 @@ PERSONAS: dict[SandboxLanguage, Persona] = {
         (("Amlodipine", "5mg", ("08:00", "20:00"), True), ("Metformin", "500mg", ("08:00",), True)),
         ("poha and chai", "dal, roti and sabzi", "khichdi", "paratha and curd"),
         "Mr Gupta", "Rahul", "Dr Mehta", "High blood pressure and type 2 diabetes. Walks slowly on stairs.",
+        ("rose", "mia", "tom", "david", "lewis"),
     ),
     "th-TH": Persona(
         "Somsri", "Nok", "daughter", "Asia/Bangkok", "Bangkok",
@@ -79,6 +83,7 @@ PERSONAS: dict[SandboxLanguage, Persona] = {
         (("Amlodipine", "5mg", ("08:00", "20:00"), True), ("Metformin", "500mg", ("08:00",), True)),
         ("rice porridge (jok)", "khao man gai", "noodle soup", "rice with stir-fried vegetables"),
         "Khun Somchai", "Lek", "Dr Suda", "High blood pressure and type 2 diabetes. Sometimes forgets the evening pill.",
+        ("rose", "mia", "tom", "david", "emma"),  # Dr Suda is a woman
     ),
 }
 
@@ -174,8 +179,9 @@ def create_sandbox(language: SandboxLanguage, now: dt.datetime | None = None) ->
             "meals": {"breakfast": "08:00", "lunch": "13:00", "dinner": "19:30"},
             "medicationSchedule": [m.model_dump() for m in meds], "healthNotes": p.health_notes,
             # Elders see their emergency contacts as faces to call: two people, like a real family.
-            "emergencyContacts": [{"name": ct.name, "phone": emma_phone, "relationship": p.relationship},
-                                  {"name": p.son, "phone": son_phone, "relationship": "son"}],
+            "emergencyContacts": [{"name": ct.name, "phone": emma_phone, "relationship": p.relationship, "face": p.faces[1]},
+                                  {"name": p.son, "phone": son_phone, "relationship": "son", "face": p.faces[2]}],
+            "face": p.faces[0],
             "assessedAt": SERVER_TIMESTAMP, "sandboxCaretakerId": ct_uid, **sandbox,
         })
         batch.set(db.collection("rules").document(elder_id), {"checkInTime": checkin_time(now, p.timezone),
@@ -183,11 +189,11 @@ def create_sandbox(language: SandboxLanguage, now: dt.datetime | None = None) ->
         for r in medication_reminders(elder_id, meds):
             batch.set(db.collection("reminders").document(r.id), r.model_dump(mode="json"))
         people = [
-            Contact(name=ct.name, phone=emma_phone, kind="family", relationship=p.relationship, trusted=True),
-            Contact(name=p.son, phone=son_phone, kind="family", relationship="son", trusted=True),
+            Contact(name=ct.name, phone=emma_phone, kind="family", relationship=p.relationship, trusted=True, face=p.faces[1]),
+            Contact(name=p.son, phone=son_phone, kind="family", relationship="son", trusted=True, face=p.faces[2]),
             Contact(name=p.neighbour, phone=_fake_phone(), kind="volunteer", relationship="neighbour",
-                    skills=["plumbing", "shopping", "tech help"], trusted=True),
-            Contact(name=p.doctor, phone=_fake_phone(), kind="doctor", relationship="doctor"),
+                    skills=["plumbing", "shopping", "tech help"], trusted=True, face=p.faces[3]),
+            Contact(name=p.doctor, phone=_fake_phone(), kind="doctor", relationship="doctor", face=p.faces[4]),
         ]
         contacts = db.collection("elders").document(elder_id).collection("contacts")
         for c in people:

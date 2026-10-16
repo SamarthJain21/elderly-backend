@@ -102,6 +102,7 @@ class ElderProfile(BaseModel):
     assessment: Assessment | None
     # Names only (no emails/phones) so the elder's app can say "Samarth set this up for you".
     caretakerNames: list[str] = []
+    face: str | None = None  # illustration key (sandbox personas); initials when unset
 
 
 def _assessment_from(elder: dict[str, Any], rules: dict[str, Any]) -> Assessment | None:
@@ -150,6 +151,7 @@ def get_elder(elder_id: str, user: CurrentUser) -> ElderProfile:
         sharingTier=elder.get("sharingTier", "daily_summary"),
         assessment=_assessment_from(elder, rules_snap.to_dict() or {}),
         caretakerNames=[n for n in names if n],
+        face=elder.get("face"),
     )
 
 

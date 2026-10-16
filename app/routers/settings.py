@@ -48,6 +48,8 @@ class EmergencyContact(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     phone: str = Field(min_length=5, max_length=20)
     relationship: str = Field(default="", max_length=50)
+    # Illustration key for people without a photo (e.g. "emma"); the app shows initials when unset.
+    face: str | None = Field(default=None, max_length=20)
 
 
 class Address(BaseModel):

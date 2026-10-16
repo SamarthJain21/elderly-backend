@@ -117,3 +117,8 @@ def test_cleanup_never_erases_a_real_elder(monkeypatch: pytest.MonkeyPatch) -> N
 def test_checkin_is_due_when_the_visitor_arrives() -> None:
     now = dt.datetime(2026, 10, 16, 8, 52, tzinfo=dt.UTC)  # 15:52 in Bangkok
     assert sandbox.checkin_time(now, "Asia/Bangkok") == "15:45"
+
+
+def test_every_persona_face_is_an_illustration_the_app_has() -> None:
+    known = {"rose", "emma", "tom", "mia", "david", "lewis", "alex", "ben"}  # elderly-frontend components/Face.tsx
+    assert all(set(p.faces) <= known for p in sandbox.PERSONAS.values())
