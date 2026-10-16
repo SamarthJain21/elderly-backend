@@ -32,7 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from pydantic import BaseModel, Field, ValidationError
 
 from app import alerts as alerts_mod  # tests swap its storage
-from app import checkin_store, contacts
+from app import checkin_store, contacts, ratelimit
 from app.access import load_elder
 from app.agent import family, live, messages
 from app.agent.chips import (
@@ -433,6 +433,9 @@ async def chat(ws: WebSocket, elder_id: str, model: Annotated[ChatModel, Depends
         while True:
             raw = await ws.receive_json()
             kind = raw.get("type") if isinstance(raw, dict) else None
+            if not ratelimit.chat_frames.allow(user.uid):
+                await s.send({"type": "error", "message": "You're sending messages very quickly — please wait a moment."})
+                continue
             try:
                 if kind == "family_action":
                     frame_a = FamilyActionFrame.model_validate(raw)

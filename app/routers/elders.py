@@ -10,7 +10,7 @@ from google.cloud.firestore import SERVER_TIMESTAMP, ArrayUnion
 from google.cloud.firestore_v1.base_query import FieldFilter
 from pydantic import BaseModel, Field
 
-from app import firebase
+from app import firebase, ratelimit
 from app.access import load_elder
 from app.auth import Caretaker, CurrentUser
 from app.config import get_settings
@@ -42,6 +42,7 @@ class ElderCredentials(BaseModel):
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_elder(body: ElderCreate, caretaker: Caretaker) -> ElderCredentials:
+    ratelimit.account_writes.check(caretaker.uid)
     email = f"elder-{uuid.uuid4()}@{get_settings().elder_email_domain}"
     password = generate_temp_password()
     record = fb_auth.create_user(

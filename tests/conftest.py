@@ -15,3 +15,11 @@ def _no_real_firestore(monkeypatch: pytest.MonkeyPatch) -> None:
     def blocked() -> None:
         raise RuntimeError("test tried to use the real Firestore — fake the store function instead")
     monkeypatch.setattr(firebase, "get_db", blocked)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Limiters are process-global; give every test its own so counts never leak between tests."""
+    from app import ratelimit
+    monkeypatch.setattr(ratelimit, "chat_frames", ratelimit.RateLimiter(20, 60))
+    monkeypatch.setattr(ratelimit, "account_writes", ratelimit.RateLimiter(10, 3600))
