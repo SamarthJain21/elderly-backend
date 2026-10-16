@@ -105,7 +105,8 @@ def test_elder_profile_includes_caretaker_names_but_no_contact_details(monkeypat
         def get(self) -> Snap:
             return Snap(self._d)
 
-    caretakers = {"c1": {"name": "Samarth", "email": "s@example.com"}, "c2": {"name": "Priya", "email": "p@example.com"}}
+    caretakers = {"c1": {"name": "Samarth", "email": "s@example.com", "photoUrl": "https://lh3.googleusercontent.com/a/s"},
+                  "c2": {"name": "Priya", "email": "p@example.com"}}
 
     class Col:
         def __init__(self, name: str) -> None:
@@ -128,6 +129,8 @@ def test_elder_profile_includes_caretaker_names_but_no_contact_details(monkeypat
     finally:
         app.dependency_overrides.clear()
     assert body["caretakerNames"] == ["Samarth", "Priya"]
+    assert body["family"] == [{"name": "Samarth", "photo": "https://lh3.googleusercontent.com/a/s"}, {"name": "Priya", "photo": None}]
+    assert "s@example.com" not in str(body)
     assert "s@example.com" not in str(body)
 
 

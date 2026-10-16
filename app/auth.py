@@ -24,6 +24,7 @@ class AuthedUser:
     provider: str
     role: Role | None
     sandbox: bool = False  # a 'Try with real AI' account (app/sandbox.py)
+    picture: str | None = None  # Google profile photo (family members)
 
 
 def authenticate(token: str) -> AuthedUser:
@@ -49,7 +50,8 @@ def authenticate(token: str) -> AuthedUser:
     if role == "caretaker" and provider != "google.com" and not sandbox:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Caretakers must sign in with Google")
 
-    return AuthedUser(uid=uid, email=claims.get("email"), provider=provider, role=role, sandbox=sandbox)
+    return AuthedUser(uid=uid, email=claims.get("email"), provider=provider, role=role, sandbox=sandbox,
+                      picture=claims.get("picture") if provider == "google.com" else None)
 
 
 def get_authed_user(

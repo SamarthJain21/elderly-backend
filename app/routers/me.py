@@ -24,6 +24,11 @@ def get_me(user: CurrentUser) -> Me:
     if user.role is None:
         # Signed in but not onboarded: frontend routes to /onboarding.
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not onboarded")
+    if user.role == "caretaker" and user.picture:
+        # Keep the family member's Google photo current: the elder sees it on their faces-to-call and messages.
+        ref = firebase.get_db().collection("caretakers").document(user.uid)
+        if (ref.get().to_dict() or {}).get("photoUrl") != user.picture:
+            ref.update({"photoUrl": user.picture})
     return Me(uid=user.uid, email=user.email, role=user.role, admin=is_admin(user.email))
 
 
@@ -53,6 +58,7 @@ def onboard_caretaker(body: CaretakerSignup, user: CurrentUser) -> Me:
         "uid": user.uid,
         "name": body.name,
         "email": user.email,
+        "photoUrl": user.picture,
         "elderIds": invited,
     })
     for elder_id in invited:
