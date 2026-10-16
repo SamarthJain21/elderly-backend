@@ -1,0 +1,31 @@
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.agent import translate
+from app.main import app
+from tests.test_chat import FakeModel, Store, _connect, model, store  # noqa: F401  (fixtures)
+
+
+def test_what_needs_translating() -> None:
+    assert translate.needs_translation("Did you take your medicine?", "hi-IN")
+    assert not translate.needs_translation("👍❤️", "hi-IN")                 # nothing to translate
+    assert not translate.needs_translation("Yes, I took it", "en-US")      # already English
+    assert translate.needs_translation("हाँ, ले ली", "en-US")
+    assert translate.needs_translation("Haan, le li dawai", "en-US", source="hi-Latn")   # Hinglish is ASCII but not English
+    assert not translate.needs_translation("I took it", "en-US", source="en-US")
+
+
+def test_family_messages_arrive_in_the_receivers_language(store: Store, model: FakeModel) -> None:  # noqa: F811
+    with TestClient(app).websocket_connect("/ws/e1") as ws:
+        _connect(ws)
+        ws.send_json({"type": "family_reply", "text": "हाँ, दवाई ले ली"})
+        f: dict[str, Any] = ws.receive_json()
+        while f["type"] != "family_message":
+            f = ws.receive_json()
+    m = f["message"]
+    assert m["text"] == "हाँ, दवाई ले ली"                       # the original is kept
+    assert m["translated"] == "[en-US] हाँ, दवाई ले ली" and m["translatedTo"] == "en-US"   # family reads English

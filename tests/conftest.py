@@ -43,3 +43,10 @@ def _no_push(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     sent: list[tuple[str, str]] = []
     monkeypatch.setattr(push, "notify_family", lambda elder, title, body, path="/caretaker": sent.append((title, body)))
     return sent
+
+
+@pytest.fixture(autouse=True)
+def _no_translate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Family-chat translation calls Gemini; tests get a marker instead (tests/test_translate.py covers it)."""
+    from app.agent import translate
+    monkeypatch.setattr(translate, "translate", lambda text, target, source=None: f"[{target}] {text}" if translate.needs_translation(text, target, source) else None)

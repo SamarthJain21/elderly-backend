@@ -29,6 +29,9 @@ class FamilyMessage(BaseModel):
     usedChips: list[int] = Field(default_factory=list)  # action chips already carried out
     quickReplies: list[str] = Field(default_factory=list)  # legacy (pre-chips) documents only
     viaAgent: bool = False  # elder asked the agent to pass it on
+    # The same message in the receiver's language (family chat across languages); None = same language.
+    translated: str | None = None
+    translatedTo: str | None = None
     createdAt: dt.datetime = Field(default_factory=lambda: dt.datetime.now(dt.UTC))
 
     @model_validator(mode="after")

@@ -34,7 +34,7 @@ from pydantic import BaseModel, Field, ValidationError
 from app import alerts as alerts_mod  # tests swap its storage
 from app import checkin_store, contacts, push, ratelimit
 from app.access import load_elder
-from app.agent import family, live, messages, voice_push
+from app.agent import family, live, messages, translate, voice_push
 from app.agent.chips import (
     FALLBACK_FOR_CARETAKER,
     FALLBACK_FOR_ELDER,
@@ -99,6 +99,14 @@ def frame_error(kind: str | None, raw: object, exc: ValidationError) -> str:
         if len(text) > 1000:
             return "That message is too long — please keep it under 1000 characters."
     return "Sorry, that didn't go through. Please try again."
+
+
+def _safe_translate(text: str, target: str, source: str | None = None) -> str | None:
+    try:
+        return translate.translate(text, target, source)
+    except Exception:  # noqa: BLE001 — the original is always shown
+        log.warning("family translation failed", exc_info=True)
+        return None
 
 
 class TextFrame(BaseModel):
@@ -388,6 +396,11 @@ class Session:
     async def on_family(self, text: str) -> None:
         """Caretaker → elder, or elder → caretakers. Delivered to everyone on the family channel."""
         elder = await self._elder()
+        # Translate for the receiver (elder's language ↔ English for family) while the chips are being made.
+        to_caretaker = self.user.role != "caretaker"
+        elder_lang = elder.get("language", "en-US")
+        target, source = ("en-US", elder_lang) if to_caretaker else (elder_lang, None)  # family may write any language
+        tr = asyncio.create_task(asyncio.to_thread(_safe_translate, text, target, source))
         if self.user.role == "caretaker":
             name = await asyncio.to_thread(family.caretaker_name, self.user.uid)
             msg = FamilyMessage(sender="caretaker", senderUid=self.user.uid, senderName=name, text=text,
@@ -395,6 +408,9 @@ class Session:
         else:
             msg = FamilyMessage(sender="elder", senderUid=self.user.uid, senderName=elder.get("name", ""), text=text,
                                 chips=await self._make_chips(elder, False, elder.get("name", ""), text))
+        translated = await tr
+        if translated:
+            msg.translated, msg.translatedTo = translated, target
         await asyncio.to_thread(family.save, self.elder_id, msg)
         await live.broadcast(self.elder_id, {"type": "family_message", "message": msg.model_dump(mode="json")}, "family")
         if self.user.role == "elder":
