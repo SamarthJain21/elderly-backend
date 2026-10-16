@@ -870,3 +870,12 @@ async def test_hedge_does_not_fire_when_the_model_answers_quickly() -> None:
     fake = _FakeModels({"lite": '{"reply": "Hi", "quickReplies": []}'})
     await GeminiChatModel(_client(fake), ["lite"], hedge_after_s=1.0).complete("sys", [Turn("elder", "hi")], AgentReply)
     assert fake.tried == ["lite"]  # exactly one request
+
+
+def test_a_bad_frame_says_what_went_wrong(store: Store, model: FakeModel) -> None:
+    with TestClient(app).websocket_connect("/ws/e1") as ws:
+        _connect(ws)
+        ws.send_json({"type": "message", "text": "x" * 1001})
+        assert "too long" in ws.receive_json()["message"]
+        ws.send_json({"type": "checkin_answers", "mood": "fantastic"})
+        assert ws.receive_json()["message"] == "Sorry, that didn't go through. Please try again."
