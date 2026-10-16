@@ -18,6 +18,7 @@ from app.alerts import EMERGENCY_NUMBER
 from app.autonomy import AutonomyRules, decide, format_money
 from app.contacts import Contact, HelpRequest, find_contact, pick_volunteer
 from app import push
+from app.agent import live
 from app.sms import send_sms
 from app.checkin_store import LogEntry
 from app.agent import family, live
@@ -83,6 +84,12 @@ ACTION_TOOLS: list[dict[str, Any]] = [
     {"name": "escalate_emergency", "description": "Use IMMEDIATELY for a fall, chest pain, trouble breathing, bleeding, "
      "fainting or any emergency. Alerts their family.",
      "parameters": {"type": "object", "properties": {"description": {"type": "string"}}, "required": ["description"]}},
+    {"name": "report_scam", "description": "Use when they mention someone (call, SMS, WhatsApp, visitor) asking for an OTP, PIN, "
+     "password, bank or card details, a money transfer or UPI payment, a 'KYC update', a prize/lottery fee, or threatening "
+     "them (police, arrest, account blocked). Only when SOMEONE ELSE contacted them and asked. NOT for their own plans "
+     "(e.g. sending a grandchild a gift), ordinary bills, or their family. Warns their family.",
+     "parameters": {"type": "object", "properties": {
+         "what": {"type": "string", "description": "One line: who contacted them and what they asked for."}}, "required": ["what"]}},
 ]
 
 ANSWER_CONFIRMATION_TOOL = {
@@ -333,6 +340,15 @@ async def run_tool(ctx: ToolContext, name: str, args: dict[str, Any]) -> dict[st
             except Exception:  # noqa: BLE001
                 log.warning("weather lookup failed for %r", city, exc_info=True)
         return {"status": "unavailable", "instruction": "Say you couldn't check the weather just now."}
+    if name == "report_scam":
+        what = str(args.get("what", "Someone asked for money or bank details"))[:300]
+        await _log(ctx, f"⚠️ Possible scam — {ctx.name}: {what}. Please call them and check.", "alert")
+        await live.broadcast(ctx.elder_id, {"type": "notice", "kind": "alert", "summary": f"⚠️ Possible scam: {what}"}, "family")
+        push.notify_family(ctx.elder, f"⚠️ Possible scam call — {ctx.name}", what)
+        return {"status": "family_warned",
+                "instruction": "Calmly tell them: do NOT share any OTP, PIN, password or bank details, do not send money, "
+                               "and hang up — real banks and police never ask for these on the phone. Say their family "
+                               "has been told and will check with them. Be reassuring, not frightening."}
     if name == "escalate_emergency":
         desc = str(args.get("description", "Emergency"))[:300]
         # Same path as the SOS button: alert record, caretaker banners, texts to emergency contacts.

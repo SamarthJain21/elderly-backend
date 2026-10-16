@@ -45,3 +45,26 @@ async def test_a_ride_to_a_saved_place_goes_to_its_exact_spot(monkeypatch: pytes
 def test_the_helper_knows_the_saved_places() -> None:
     p = build_system_prompt({"name": "Rose", "places": [CLINIC, TEMPLE]}, [], dt.datetime(2026, 10, 17, tzinfo=dt.UTC))
     assert "Saved places for rides" in p and "Clinic (Koregaon Park)" in p and "Priya's home (Pune)" in p
+
+
+@pytest.mark.anyio
+async def test_a_reported_scam_warns_the_family_and_tells_the_helper_what_to_say(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import push
+    from app.agent import live
+    logs: list[Any] = []
+    frames: list[dict[str, Any]] = []
+
+    async def fake_log(ctx: Any, message: str, kind: str, actor: str = "agent") -> None:
+        logs.append((kind, message))
+
+    async def fake_broadcast(eid: str, frame: dict[str, Any], channel: str = "agent") -> None:
+        frames.append(frame)
+    monkeypatch.setattr(executor, "_log", fake_log)
+    monkeypatch.setattr(live, "broadcast", fake_broadcast)
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setattr(push, "notify_family", lambda elder, title, body, path="/caretaker": sent.append((title, body)))
+    ctx = executor.ToolContext(elder_id="e1", elder={"name": "Rose"}, rules=default_rules("INR"), request_text="", actor_uid="e1")
+    r = await executor.run_tool(ctx, "report_scam", {"what": "Caller claiming to be the bank asked for her OTP"})
+    assert r["status"] == "family_warned" and "do NOT share" in r["instruction"]
+    assert logs[0][0] == "alert" and "Possible scam" in logs[0][1]
+    assert frames[0]["type"] == "notice" and sent[0][0].startswith("⚠️ Possible scam")

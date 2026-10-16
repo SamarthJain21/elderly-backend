@@ -70,6 +70,14 @@ CASES = [
     # Hindi (Devanagari) elder who types Hinglish: understood, answered in Devanagari
     Case("hi-hinglish-in", "hi-IN", "Meri BP ki dawai khatam ho gayi hai", {"order_medicine", REPLY}),
     Case("hi-hinglish-fall", "hi-IN", "Seedhi se gir gayi, pair mein bahut dard hai", "escalate_emergency", forbid=NO_AMBULANCE),
+    # Scams: warn and tell the family; ordinary money talk is not a scam
+    Case("en-scam-otp", "en-US", "A man from the bank called and wants the OTP I just got on my phone", "report_scam"),
+    Case("en-scam-kyc", "en-US", "I got an SMS that my account will be blocked unless I update KYC on this link", "report_scam"),
+    Case("hi-scam", "hi-IN", "किसी ने फ़ोन किया, बोला पुलिस से है, पैसे भेजो नहीं तो गिरफ़्तारी होगी", "report_scam"),
+    Case("hl-scam", "hi-Latn", "Ek call aaya, bol rahe the lottery jeeti hai, fees ke liye UPI karna hai", "report_scam"),
+    Case("th-scam", "th-TH", "มีคนโทรมาบอกว่าเป็นธนาคาร ขอรหัส OTP ค่ะ", "report_scam"),
+    Case("en-not-scam-gift", "en-US", "I want to send my grandson some money for his birthday", {REPLY, "send_message_to_caretaker"}),
+    Case("en-not-scam-bill", "en-US", "My electricity bill came today, it's 900 rupees", REPLY),
     # Thai
     Case("th-chat", "th-TH", "สวัสดีค่ะ วันนี้รู้สึกสบายดี", REPLY),
     Case("th-weather", "th-TH", "วันนี้ฝนจะตกไหม", "check_weather"),
@@ -101,6 +109,7 @@ STUB: dict[str, dict[str, Any]] = {
     "notify_volunteer": {"status": "done", "name": "David", "say": "David has been asked to come and help."},
     "call_contact": {"status": "ready_to_call", "name": "Emma", "say": "Tap the button to call Emma."},
     "escalate_emergency": {"status": "done", "say": "Your family has been alerted. Press the red SOS button too."},
+    "report_scam": {"status": "family_warned", "instruction": "Tell them not to share any OTP or bank details and to hang up; family has been told."},
 }
 
 
