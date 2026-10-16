@@ -52,7 +52,7 @@ def test_me_with_invalid_token_is_401(client: TestClient) -> None:
 def test_me_returns_role_for_onboarded_user(client: TestClient) -> None:
     r = client.get("/me", headers=h("elder"))
     assert r.status_code == 200
-    assert r.json() == {"uid": "e1", "email": "e@elderly.app", "role": "elder"}
+    assert r.json() == {"uid": "e1", "email": "e@elderly.app", "role": "elder", "admin": False}
 
 
 def test_me_is_404_before_onboarding(client: TestClient) -> None:

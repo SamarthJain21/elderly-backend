@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     # Local dev only. On Cloud Run, leave unset and use the service's identity (ADC).
     firebase_credentials: Path | None = Path("service-account.json")
     cors_origins: list[str] = ["http://localhost:5173"]
+    # Google accounts that can open the cost dashboard (/admin). Set ADMIN_EMAILS='["you@gmail.com"]'.
+    admin_emails: list[str] = []
     elder_email_domain: str = "elderly.app"
     # Gemini: AI Studio key if set (free tier); otherwise Vertex AI billed to firebase_project_id.
     gemini_api_key: SecretStr | None = None

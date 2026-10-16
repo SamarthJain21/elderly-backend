@@ -7,6 +7,7 @@ from functools import lru_cache
 from google.genai import types
 from pydantic import BaseModel, Field
 
+from app import usage
 from app.agent.llm import genai_client
 from app.config import get_settings
 
@@ -32,6 +33,7 @@ def check(name: str, country: str) -> MedicineCheck:
             system_instruction=_PROMPT.format(country=country), temperature=0,
             response_mime_type="application/json", response_schema=MedicineCheck),
     )
+    usage.gemini(get_settings().gemini_model, r, "medicine-check")
     out = MedicineCheck.model_validate_json(r.text or "{}") if r.text else MedicineCheck(input=name, recognised=False)
     # Don't echo the input back as a "suggestion" or a brand as its own generic.
     # …nor a shortened copy of it ("Telma 40" → "Telma" just drops the strength).
