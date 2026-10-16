@@ -72,11 +72,18 @@ def test_endpoint_is_rate_limited_per_visitor(client: TestClient, monkeypatch: p
                                expiresAt=dt.datetime(2026, 10, 17, tzinfo=dt.UTC))
     monkeypatch.setattr(sandbox, "create_sandbox", fake_create)
     monkeypatch.setattr(sandbox, "cleanup_expired", lambda: 0)
+    from app.routers import sandbox_api
+    warmed: list[str] = []
+
+    async def fake_weather(city: str) -> None:
+        warmed.append(city)
+    monkeypatch.setattr(sandbox_api, "get_weather", fake_weather)
     ip = {"X-Forwarded-For": "203.0.113.7, 10.0.0.1"}
     codes = [client.post("/demo/sandbox", json={"language": "th-TH"}, headers=ip).status_code for _ in range(6)]
     assert codes == [201] * 5 + [429]
     assert client.post("/demo/sandbox", json={}, headers={"X-Forwarded-For": "198.51.100.1"}).status_code == 201
     assert made[-1] == "en-US"
+    assert "Bangkok" in warmed and "Pune" in warmed  # each new sandbox pre-loads its city's weather
 
 
 def test_cleanup_never_erases_a_real_elder(monkeypatch: pytest.MonkeyPatch) -> None:
