@@ -24,7 +24,8 @@ from app.agent import family, live
 from app.agent.family import FamilyMessage
 from app.tools import actions, providers
 from app.tools.actions import Action
-from app.tools.geo import geocode, km_between, maps_link, uber_link
+from app.routers import places_saved_api
+from app.tools.geo import Place, geocode, km_between, maps_link, uber_link
 from app.tools.weather import get_weather
 
 log = logging.getLogger(__name__)
@@ -55,9 +56,9 @@ ACTION_TOOLS: list[dict[str, Any]] = [
      "parameters": {"type": "object", "properties": {
          "medicine": {"type": "string"}, "quantity": {"type": "integer", "description": "Number of strips/packs, default 1."}},
          "required": ["medicine"]}},
-    {"name": "book_ride", "description": "Book a taxi for them.",
+    {"name": "book_ride", "description": "Book a taxi for them, from home. If it's unclear where to, ask first (offer their saved places).",
      "parameters": {"type": "object", "properties": {
-         "destination": {"type": "string"}, "when": {"type": "string", "description": "'now' or HH:MM today."}},
+         "destination": {"type": "string", "description": "One of their saved places' names if it fits, else the place they said."}, "when": {"type": "string", "description": "'now' or HH:MM today."}},
          "required": ["destination"]}},
     {"name": "set_reminder", "description": "Set a reminder for them at a time.",
      "parameters": {"type": "object", "properties": {
@@ -270,10 +271,16 @@ async def run_tool(ctx: ToolContext, name: str, args: dict[str, Any]) -> dict[st
                             providers.quote_medicine(med, qty, currency), deliverTo=deliver_to)
     if name == "book_ride":
         dest = str(args.get("destination", "")).strip()
-        try:
-            place = await geocode(f"{dest}, {address.get('city', '')}".strip(", "), ctx.tz, home)
-        except Exception:  # noqa: BLE001
-            place = None
+        saved = places_saved_api.match(places_saved_api.read(ctx.elder), dest)
+        place = None
+        if saved and saved.address.lat is not None and saved.address.lng is not None:
+            # A place the family saved: exact address, labelled the way the elder says it.
+            place, dest = Place(lat=saved.address.lat, lng=saved.address.lng, name=saved.address.one_line()), saved.name
+        else:
+            try:
+                place = await geocode(f"{dest}, {address.get('city', '')}".strip(", "), ctx.tz, home)
+            except Exception:  # noqa: BLE001
+                place = None
         if place is None:
             return {"status": "place_not_found",
                     "instruction": f"Say you couldn't find '{dest}'. Ask for the full name or address of the place."}

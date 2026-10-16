@@ -14,6 +14,7 @@ from app.routers import places_api  # address search
 from app.routers import medicines_api  # medicine-name check
 from app.routers import device_api  # the elder app's settings, managed by family too
 from app.routers import admin_api  # cost dashboard
+from app.routers import places_saved_api  # saved places for rides
 from app.routers import sandbox_api  # 'Try with real AI' (own line: keeps feature branches from colliding)
 from app import usage
 from app.config import get_settings
@@ -51,6 +52,7 @@ app.include_router(places_api.router)
 app.include_router(medicines_api.router)
 app.include_router(device_api.router)
 app.include_router(admin_api.router)
+app.include_router(places_saved_api.router)
 app.include_router(checkins.router)
 app.include_router(settings.router)
 app.include_router(approvals.router)

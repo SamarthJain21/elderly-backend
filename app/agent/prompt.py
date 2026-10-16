@@ -64,6 +64,9 @@ def _context(elder: dict[str, Any], today: list[Reminder], now_utc: dt.datetime)
         lines.append(f"- Medicines: {med_text}.")
     if people := elder.get("_contacts"):
         lines.append("- People they know (for calls and help): " + "; ".join(people) + ".")
+    if saved := elder.get("places"):
+        names = [f"{p['name']} ({p['address'].get('line2') or p['address'].get('city', '')})".replace(" ()", "") for p in saved]
+        lines.append("- Saved places for rides (offer these as quick replies when they want a taxi): " + "; ".join(names) + ".")
     if elder.get("healthNotes"):
         lines.append(f"- Health notes from family: {elder['healthNotes']}")
     if today:
