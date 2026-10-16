@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from app import checkin_store, contacts, firebase
 from app.agent import live
 from app.checkin_store import LogEntry
+from app import push
 from app.sms import send_sms
 
 AlertStatus = Literal["active", "acknowledged", "resolved"]
@@ -102,4 +103,5 @@ async def raise_alert(elder_id: str, elder: dict[str, Any], source: Literal["sos
         message=f"🚨 SOS — {name} {what}." + (" " + " ".join(told) if told else ""),
         kind="alert", actor="elder" if source == "sos_button" else "agent"))
     await live.broadcast(elder_id, {"type": "alert", "alert": a.model_dump(mode="json")}, "family")
+    push.notify_family(elder, f"🚨 {name} needs help", "Pressed the SOS button." if source == "sos_button" else description[:200])
     return a

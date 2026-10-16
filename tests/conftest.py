@@ -34,3 +34,12 @@ def _no_voice_push(monkeypatch: pytest.MonkeyPatch) -> None:
     """Chat tests count frames and must not call Text-to-Speech; tests/test_voice_push.py covers the push itself."""
     from app.agent import voice_push
     monkeypatch.setattr(voice_push, "speak_reply", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_push(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    """Record family notifications instead of sending them (tests/test_push.py covers sending)."""
+    from app import push
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setattr(push, "notify_family", lambda elder, title, body, path="/caretaker": sent.append((title, body)))
+    return sent

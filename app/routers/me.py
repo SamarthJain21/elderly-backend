@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
 from google.cloud.firestore import SERVER_TIMESTAMP, ArrayUnion
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app import firebase
+from app import firebase, push
 from app.auth import CurrentUser, Role
 from app.routers.admin_api import is_admin
 from app.validation import Name
@@ -61,3 +61,20 @@ def onboard_caretaker(body: CaretakerSignup, user: CurrentUser) -> Me:
         batch.delete(invite_ref)
     batch.commit()
     return Me(uid=user.uid, email=user.email, role="caretaker")
+
+
+class PushToken(BaseModel):
+    token: str = Field(min_length=20, max_length=4096)
+
+
+@router.post("/me/push-token", status_code=status.HTTP_204_NO_CONTENT)
+def add_push_token(body: PushToken, user: CurrentUser) -> None:
+    """This device wants notifications (SOS, worrying check-ins, approvals, messages). Family members only."""
+    if user.role != "caretaker":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Notifications are for family members")
+    push.add_token(user.uid, body.token)
+
+
+@router.delete("/me/push-token", status_code=status.HTTP_204_NO_CONTENT)
+def remove_push_token(body: PushToken, user: CurrentUser) -> None:
+    push.remove_token(user.uid, body.token)

@@ -32,7 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from pydantic import BaseModel, Field, ValidationError
 
 from app import alerts as alerts_mod  # tests swap its storage
-from app import checkin_store, contacts, ratelimit
+from app import checkin_store, contacts, push, ratelimit
 from app.access import load_elder
 from app.agent import family, live, messages, voice_push
 from app.agent.chips import (
@@ -280,6 +280,9 @@ class Session:
         )
         # Family apps refresh now instead of on their next poll (a worrying answer shouldn't wait 15 s).
         await live.broadcast(self.elder_id, {"type": "checkin_done", "kind": kind, "summary": summary}, "family")
+        if kind != "ok":
+            elder = await self._elder()
+            push.notify_family(elder, f"{'😟' if kind == 'alert' else '👀'} {elder.get('name', '')}'s check-in", summary.removeprefix("Check-in: "))
         # A finished check-in may complete a pattern (e.g. 2nd low-mood day in a row): tell the family once.
         try:
             await asyncio.to_thread(insights_api.new_drift_flags, self.elder_id, await self._elder())
@@ -382,6 +385,8 @@ class Session:
                                 chips=await self._make_chips(elder, False, elder.get("name", ""), text))
         await asyncio.to_thread(family.save, self.elder_id, msg)
         await live.broadcast(self.elder_id, {"type": "family_message", "message": msg.model_dump(mode="json")}, "family")
+        if self.user.role == "elder":
+            push.notify_family(elder, f"💬 {elder.get('name', '')}", text, "/caretaker/chat")
 
     async def on_family_action(self, message_id: str, chip_index: int) -> None:
         """Carry out an action chip. Checked: right message, right recipient, not used, a known action."""
