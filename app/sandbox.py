@@ -27,7 +27,7 @@ from app.schedule import ALL_DAYS, Medication, medication_reminders
 log = logging.getLogger(__name__)
 
 SANDBOX_TTL = dt.timedelta(hours=24)
-SandboxLanguage = Literal["en-US", "hi-IN", "th-TH"]
+SandboxLanguage = Literal["en-US", "hi-IN", "hi-Latn", "th-TH"]
 FAKE_PHONE_PREFIX = "+000"  # app/sms.py never texts these
 
 
@@ -57,6 +57,14 @@ PERSONAS: dict[SandboxLanguage, Persona] = {
         "David", "Tom", "Dr Lewis", "Mild high blood pressure and type 2 diabetes. Knees ache on cold mornings.",
     ),
     "hi-IN": Persona(
+        "Kamla", "Priya", "daughter", "Asia/Kolkata", "New Delhi",
+        {"line1": "B-14 Lajpat Nagar II", "line2": "", "landmark": "Near Central Market", "city": "New Delhi",
+         "postcode": "110024", "lat": 28.5677, "lng": 77.2433, "precision": "street"},
+        (("Amlodipine", "5mg", ("08:00", "20:00"), True), ("Metformin", "500mg", ("08:00",), True)),
+        ("poha and chai", "dal, roti and sabzi", "khichdi", "paratha and curd"),
+        "Mr Gupta", "Rahul", "Dr Mehta", "High blood pressure and type 2 diabetes. Walks slowly on stairs.",
+    ),
+    "hi-Latn": Persona(  # Hinglish: same household as Hindi; the helper writes Roman-script Hindi
         "Kamla", "Priya", "daughter", "Asia/Kolkata", "New Delhi",
         {"line1": "B-14 Lajpat Nagar II", "line2": "", "landmark": "Near Central Market", "city": "New Delhi",
          "postcode": "110024", "lat": 28.5677, "lng": 77.2433, "precision": "street"},

@@ -20,3 +20,12 @@ def test_passed_medicine_reminder_is_not_treated_as_taken() -> None:
     p = build_system_prompt({"name": "Rose", "timezone": "Asia/Kolkata"}, [r], NOW)  # 11:00 local
     assert "08:00 Amlodipine (already passed)" in p
     assert "does NOT mean they did it" in p
+
+
+def test_hinglish_elder_gets_roman_script_hindi() -> None:
+    p = build_system_prompt({"name": "Kamla", "language": "hi-Latn"}, [], NOW)
+    assert "Always reply in Hinglish" in p and "Never use Devanagari" in p
+
+
+def test_emergency_tool_is_never_described_as_calling_an_ambulance() -> None:
+    assert "never say you called an ambulance" in build_system_prompt({"name": "Rose"}, [], NOW)

@@ -59,7 +59,7 @@ def test_history_tells_the_story_a_steady_fortnight_then_two_low_days() -> None:
 
 
 def test_every_language_has_a_persona() -> None:
-    assert set(sandbox.PERSONAS) == {"en-US", "hi-IN", "th-TH"}
+    assert set(sandbox.PERSONAS) == {"en-US", "hi-IN", "hi-Latn", "th-TH"}
 
 
 def test_endpoint_is_rate_limited_per_visitor(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

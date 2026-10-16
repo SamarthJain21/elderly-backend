@@ -62,3 +62,24 @@ def test_repeated_sentences_come_from_the_cache(monkeypatch: pytest.MonkeyPatch)
     assert voice.synthesize("Tap Yes or No", "hi-IN") == b"ID3"
     assert len(posts) == 1 and posts[0]["voice"]["name"] == "hi-IN-Chirp3-HD-Sulafat"
     assert posts[0]["audioConfig"]["speakingRate"] == voice.SPEAKING_RATE
+
+
+def test_hinglish_is_spoken_by_the_hindi_voice_after_conversion_to_devanagari(monkeypatch: pytest.MonkeyPatch) -> None:
+    posts: list[dict[str, Any]] = []
+
+    class R:
+        def raise_for_status(self) -> None: ...
+        def json(self) -> dict[str, str]:
+            return {"audioContent": "SUQz"}
+
+    class S:
+        def post(self, url: str, json: dict[str, Any], timeout: int) -> R:
+            posts.append(json)
+            return R()
+    monkeypatch.setattr(voice, "_session", lambda: S())
+    monkeypatch.setattr(voice, "to_devanagari", lambda t: "नमस्ते जी" if t == "Namaste ji" else pytest.fail(t))
+    voice._cache.clear()
+    voice.synthesize("Namaste ji", "hi-Latn")
+    assert posts[0]["input"]["text"] == "नमस्ते जी" and posts[0]["voice"]["languageCode"] == "hi-IN"
+    voice.synthesize("Namaste ji", "hi-IN")  # same text, other language: its own clip, no conversion
+    assert posts[1]["input"]["text"] == "Namaste ji"

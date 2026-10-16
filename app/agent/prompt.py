@@ -11,6 +11,8 @@ from app.schedule import Reminder
 LANGUAGE_NAMES = {
     "en-US": "English",
     "hi-IN": "Hindi (Devanagari script)",
+    "hi-Latn": ("Hinglish — Hindi written in Roman (English) letters, mixing in English words the way people in India "
+                "text, e.g. 'Namaste ji! Aapki dawai 8 baje hai, le li kya?'. Never use Devanagari script"),
     "th-TH": "Thai",
     "ja-JP": "Japanese",
     "ko-KR": "Korean",
@@ -104,7 +106,9 @@ def build_system_prompt(
         "- awaiting_elder_confirmation → say what it is and the price, ask them to tap Yes or No.",
         "- sent_to_family_for_approval → say their family will approve it soon. not_allowed → kindly say you can't.",
         "- ready_to_call → the call has NOT started: tell them to tap the green call button to phone that person.",
-        "- Emergencies (fall, chest pain, breathing trouble, bleeding, fainting): call escalate_emergency at once.",
+        "- Emergencies (fall, chest pain, breathing trouble, bleeding, fainting): call escalate_emergency at once. "
+        "It alerts their FAMILY and trusted neighbours only — never say you called an ambulance, emergency services, "
+        "a doctor or the police. If it may be serious, tell them to call the emergency number themselves.",
         "",
         f"Quick replies: exactly 3 short options the ELDER would tap to answer you — written in their own voice "
         f"(first person, max 5 words, in {language} even if they wrote in another language), e.g. 'I slept well', 'Tell me more', 'What's the weather?'. "

@@ -17,6 +17,7 @@ from app.config import get_settings
 VOICES = {
     "en-US": ("en-US", "en-US-Chirp3-HD-Sulafat"),
     "hi-IN": ("hi-IN", "hi-IN-Chirp3-HD-Sulafat"),
+    "hi-Latn": ("hi-IN", "hi-IN-Chirp3-HD-Sulafat"),  # Hinglish: converted to Devanagari first (to_devanagari)
     "th-TH": ("th-TH", "th-TH-Chirp3-HD-Sulafat"),
     "ja-JP": ("ja-JP", "ja-JP-Chirp3-HD-Sulafat"),
     "ko-KR": ("ko-KR", "ko-KR-Chirp3-HD-Sulafat"),
@@ -48,15 +49,36 @@ def _session() -> AuthorizedSession:
     return AuthorizedSession(creds)
 
 
+_TO_DEVANAGARI = (
+    "Rewrite this Hinglish (Hindi in Roman letters, with some English words) in Devanagari script so a Hindi "
+    "text-to-speech voice pronounces it naturally. Keep the exact words and meaning; write English words, names and "
+    "numbers the way a Hindi speaker says them (e.g. 'medicine' → 'मेडिसिन', '8 baje' → '8 बजे'). Keep symbols like ₹. "
+    "Reply with the rewritten text only."
+)
+
+
+def to_devanagari(text: str) -> str:
+    """Hinglish → Devanagari for the Hindi voice (it reads Roman letters with English sounds). Fast model, no thinking."""
+    from google.genai import types
+
+    from app.agent.llm import genai_client
+    r = genai_client().models.generate_content(
+        model=get_settings().gemini_model, contents=text,
+        config=types.GenerateContentConfig(system_instruction=_TO_DEVANAGARI, temperature=0),
+    )
+    return (r.text or "").strip() or text
+
+
 def synthesize(text: str, language: str) -> bytes:
     """MP3 bytes. Raises on API errors (the caller turns that into a 502 → browser voice)."""
     lang, voice = VOICES.get(language, VOICES["en-US"])
-    key = (voice, text)
+    key = (f"{voice}|{language}", text)
     if key in _cache:
         _cache.move_to_end(key)
         return _cache[key]
+    spoken = to_devanagari(text) if language == "hi-Latn" else text
     r = _session().post(_URL, json={
-        "input": {"text": text},
+        "input": {"text": spoken},
         "voice": {"languageCode": lang, "name": voice},
         "audioConfig": {"audioEncoding": "MP3", "speakingRate": SPEAKING_RATE},
     }, timeout=10)

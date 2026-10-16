@@ -3,13 +3,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Literal
-
 from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel, Field
 
 from app import ratelimit, voice
 from app.auth import CurrentUser
+from app.routers.elders import Language
 
 router = APIRouter(tags=["voice"])
 log = logging.getLogger(__name__)
@@ -17,7 +16,7 @@ log = logging.getLogger(__name__)
 
 class SpeakRequest(BaseModel):
     text: str = Field(min_length=1, max_length=800)
-    language: Literal["en-US", "hi-IN", "th-TH", "ja-JP", "ko-KR"] = "en-US"
+    language: Language = "en-US"
 
 
 @router.post("/tts", response_class=Response, responses={200: {"content": {"audio/mpeg": {}}}})

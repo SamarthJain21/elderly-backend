@@ -18,7 +18,8 @@ from app.schedule import Assessment, CheckInSchedule, Meals, Medication, Sleep, 
 
 router = APIRouter(prefix="/elders", tags=["elders"])
 
-Language = Literal["en-US", "hi-IN", "th-TH", "ja-JP", "ko-KR"]
+# hi-Latn = Hinglish: Hindi written in Roman letters, mixed with English the way people text in India.
+Language = Literal["en-US", "hi-IN", "hi-Latn", "th-TH", "ja-JP", "ko-KR"]
 
 # No 0/O, 1/l/I — the elder may have to type this off a phone screen.
 _PASSWORD_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"

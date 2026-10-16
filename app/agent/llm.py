@@ -224,11 +224,15 @@ def _vertex_client() -> genai.Client:
 
 
 @lru_cache
-def get_chat_model() -> ChatModel:
+def genai_client() -> genai.Client:
     """AI Studio key if GEMINI_API_KEY is set (free tier, no billing), else Vertex AI (needs Blaze)."""
     settings = get_settings()
     if settings.gemini_api_key is not None:
-        client = genai.Client(api_key=settings.gemini_api_key.get_secret_value())
-    else:
-        client = _vertex_client()
-    return GeminiChatModel(client, [settings.gemini_model, *settings.gemini_fallback_models])
+        return genai.Client(api_key=settings.gemini_api_key.get_secret_value())
+    return _vertex_client()
+
+
+@lru_cache
+def get_chat_model() -> ChatModel:
+    settings = get_settings()
+    return GeminiChatModel(genai_client(), [settings.gemini_model, *settings.gemini_fallback_models])
