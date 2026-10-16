@@ -337,6 +337,21 @@ def test_guided_checkin_collects_all_fields_then_logs(store: Store) -> None:
     assert all("daily check-in" in prompt for prompt, _ in model.calls)
 
 
+def test_tap_checkin_records_the_answers_without_the_model(store: Store, model: FakeModel) -> None:
+    with TestClient(app).websocket_connect("/ws/e1") as ws:
+        ws.send_json({"type": "auth", "token": "elder-token"})
+        ws.receive_json(), ws.receive_json(), ws.receive_json()
+        ws.send_json({"type": "checkin_answers", "mood": "low", "sleepQuality": "poorly", "ate": False, "medicationTaken": True})
+        thanks = _agent_reply(ws)
+        final = ws.receive_json()
+    assert final["type"] == "checkin" and final["checkin"]["status"] == "done"
+    c = next(iter(store.checkins.values()))
+    assert (c.mood, c.sleepQuality, c.meals, c.medicationTaken) == ("low", "poorly", "nothing yet", True)
+    assert len(store.logs) == 1 and store.logs[0].kind == "warn"   # low mood, poor sleep: same triage as the chat
+    assert "Emma" in thanks["text"] and "तबीयत" in thanks["text"]   # Hindi elder, low mood → the gentle version
+    assert model.calls == []                                        # no model needed
+
+
 def test_checkin_cannot_be_started_twice_in_a_day(store: Store, model: FakeModel) -> None:
     model.extracted = [{"mood": "good", "sleepQuality": "well", "meals": "rice", "medicationTaken": True}]
     with TestClient(app).websocket_connect("/ws/e1") as ws:

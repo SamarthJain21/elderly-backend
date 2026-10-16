@@ -23,3 +23,18 @@ def checkin_opener(language: str, mood: Mood | None) -> str:
     if mood is None:
         return _START.get(language, _START["en-US"])
     return _MOOD.get(language, _MOOD["en-US"])[mood]
+
+
+_THANKS = {
+    "en-US": ("Thank you! I've shared it with {name}. Have a lovely day.", "Thank you for telling me. I've let {name} know you're not feeling great."),
+    "hi-IN": ("धन्यवाद! मैंने {name} को बता दिया है। आपका दिन अच्छा रहे।", "बताने के लिए धन्यवाद। मैंने {name} को बता दिया है कि आपकी तबीयत ठीक नहीं है।"),
+    "hi-Latn": ("Dhanyavaad! Maine {name} ko bata diya hai. Aapka din accha rahe.", "Batane ke liye dhanyavaad. Maine {name} ko bata diya hai ki aapki tabiyat theek nahi hai."),
+    "th-TH": ("ขอบคุณค่ะ! บอก{name}ให้แล้วนะคะ ขอให้เป็นวันที่ดีค่ะ", "ขอบคุณที่บอกนะคะ บอก{name}แล้วว่าวันนี้ไม่ค่อยสบาย"),
+}
+
+
+def checkin_thanks(language: str, mood: Mood, family_name: str | None) -> str:
+    """The helper's closing line after the tap check-in."""
+    good, poorly = _THANKS.get(language, _THANKS["en-US"])
+    name = family_name or {"hi-IN": "परिवार", "hi-Latn": "family", "th-TH": "ครอบครัว"}.get(language, "your family")
+    return (poorly if mood in ("low", "bad") else good).format(name=name)
