@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
+import time
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
@@ -60,6 +61,24 @@ from app.tools.actions import Action, ActionCard
 from app.tools.executor import ToolContext, perform, run_tool, tool_declarations
 
 log = logging.getLogger(__name__)
+
+
+class Timings:
+    """Per-turn latency breakdown, logged as one line (read in Cloud Run logs: 'turn timings')."""
+
+    def __init__(self, what: str, elder_id: str) -> None:
+        self.what, self.elder_id, self.t0 = what, elder_id, time.perf_counter()
+        self.last, self.parts = self.t0, {}
+
+    def mark(self, name: str) -> None:
+        now = time.perf_counter()
+        self.parts[name] = round((now - self.last) * 1000)
+        self.last = now
+
+    def log(self, **extra: Any) -> None:
+        total = round((time.perf_counter() - self.t0) * 1000)
+        log.info("turn timings %s total=%dms %s %s", self.what, total,
+                 " ".join(f"{k}={v}ms" for k, v in self.parts.items()), " ".join(f"{k}={v}" for k, v in extra.items() if v))
 router = APIRouter()
 
 AUTH_TIMEOUT_S = 10
@@ -120,8 +139,8 @@ class Session:
         everything = await asyncio.to_thread(all_reminders, self.elder_id)
         return reminders_for_day(everything, local_today(tz, now))
 
-    async def today_checkin(self) -> TodayCheckIn | None:
-        elder = await self._elder()
+    async def today_checkin(self, elder: dict[str, Any] | None = None) -> TodayCheckIn | None:
+        elder = elder if elder is not None else await self._elder()
         return await asyncio.to_thread(checkin_store.today_checkin, self.elder_id, elder, dt.datetime.now(dt.UTC))
 
     async def send_checkin_state(self) -> None:
@@ -168,15 +187,23 @@ class Session:
         await update_card(fresh)
         return result
 
-    async def chat_turn(self, text: str) -> None:
-        elder, now = await self._elder(), dt.datetime.now(dt.UTC)
-        rules = await asyncio.to_thread(load_rules, self.elder_id, elder)
-        people = await asyncio.to_thread(contacts.list_contacts, self.elder_id)
+    async def chat_turn(self, text: str, elder: dict[str, Any] | None = None) -> None:
+        t = Timings("chat_turn", self.elder_id)
+        now = dt.datetime.now(dt.UTC)
+        elder = elder if elder is not None else await self._elder()
+        # Independent reads in parallel (each is a Firestore round-trip): this used to be ~6 in a row.
+        rules, people, pending, today, turns = await asyncio.gather(
+            asyncio.to_thread(load_rules, self.elder_id, elder),
+            asyncio.to_thread(contacts.list_contacts, self.elder_id),
+            self._pending_for_elder(),
+            self._today_reminders(elder, now),
+            self._turns(),
+        )
+        t.mark("context")
         # Names + relationships only (no phone numbers) so the model can pick who to call or ask.
         elder = {**elder, "_contacts": [f"{p.name} ({p.relationship or p.kind}{', volunteer: ' + ', '.join(p.skills) if p.kind == 'volunteer' else ''})"
                                         for p in people]}
-        pending = await self._pending_for_elder()
-        prompt = build_system_prompt(elder, await self._today_reminders(elder, now), now, pending.summary() if pending else None)
+        prompt = build_system_prompt(elder, today, now, pending.summary() if pending else None)
         ctx = ToolContext(elder_id=self.elder_id, elder=elder, rules=rules, request_text=text, actor_uid=self.user.uid,
                           people=people)
 
@@ -186,10 +213,13 @@ class Session:
             return await run_tool(ctx, name, args)
 
         reply = await asyncio.wait_for(
-            self.model.run(prompt, await self._turns(), tool_declarations(pending is not None), execute), MODEL_TIMEOUT_S,
+            self.model.run(prompt, turns, tool_declarations(pending is not None), execute), MODEL_TIMEOUT_S,
         )
+        t.mark("model+tools")
         reply.quickReplies = clean_quick_replies(reply.quickReplies, elder.get("name", ""))
         await self._reply(reply, ctx.touched[-1] if ctx.touched else None)
+        t.mark("reply_sent")
+        t.log(tool=ctx.touched[-1].tool if ctx.touched else None)
 
     async def on_confirm(self, action_id: str, approve: bool) -> None:
         a = await asyncio.to_thread(actions.get, self.elder_id, action_id)
@@ -204,17 +234,23 @@ class Session:
             return
         await narrate(self.model, elder, self.elder_id, f"{a.summary()} → {result}", str(result.get("say", "Okay.")))
 
-    async def checkin_turn(self, c: CheckIn) -> None:
-        elder, now = await self._elder(), dt.datetime.now(dt.UTC)
-        prompt = build_checkin_prompt(elder, c, await self._today_reminders(elder, now), now)
-        turn = await asyncio.wait_for(self.model.complete(prompt, await self._turns(), CheckInTurn), MODEL_TIMEOUT_S)
+    async def checkin_turn(self, c: CheckIn, elder: dict[str, Any] | None = None) -> None:
+        t = Timings("checkin_turn", self.elder_id)
+        elder, now = elder if elder is not None else await self._elder(), dt.datetime.now(dt.UTC)
+        today, turns = await asyncio.gather(self._today_reminders(elder, now), self._turns())
+        t.mark("context")
+        prompt = build_checkin_prompt(elder, c, today, now)
+        turn = await asyncio.wait_for(self.model.complete(prompt, turns, CheckInTurn), MODEL_TIMEOUT_S)
+        t.mark("model")
         c = merge(c, turn.extracted).model_copy(update={"turns": c.turns + 1})
         if next_missing(c) is None or c.turns >= MAX_TURNS:
             await self._finish(c, now)
         else:
             await asyncio.to_thread(checkin_store.save_checkin, c)
-        await self._reply(turn)
+        await self._reply(turn)  # the elder sees the reply before the status refresh below
+        t.mark("reply_sent")
         await self.send_checkin_state()
+        t.log()
 
     async def _finish(self, c: CheckIn, now: dt.datetime) -> None:
         kind, escalate, summary = assess(c)
@@ -335,13 +371,14 @@ class Session:
         await live.broadcast(self.elder_id, {"type": "family_message", "message": note.model_dump(mode="json")}, "family")
 
     async def on_text(self, text: str) -> None:
-        await self.save_elder_message(text)
+        # Save the elder's message and load what we need at the same time; "typing" goes out as soon as it's saved.
+        elder = await self._elder()
+        _, state = await asyncio.gather(self.save_elder_message(text), self.today_checkin(elder))
         await self.send({"type": "typing"})
-        state = await self.today_checkin()
         if state is not None and state.checkIn is not None and state.checkIn.status == "in_progress":
-            await self.checkin_turn(state.checkIn)
+            await self.checkin_turn(state.checkIn, elder)
         else:
-            await self.chat_turn(text)
+            await self.chat_turn(text, elder)
 
 
 async def _authenticate(ws: WebSocket, elder_id: str) -> AuthedUser | None:

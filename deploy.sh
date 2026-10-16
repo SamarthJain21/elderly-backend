@@ -32,6 +32,8 @@ gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$BUIL
   --condition=None --quiet >/dev/null
 
 # --max-instances 1: live chat pushes are held in one process (see FOUND-ISSUES).
+# --cpu-boost: extra CPU while starting → faster cold starts. MIN_INSTANCES=1 removes cold starts entirely
+#   (~6 s on the first request after idle) at the cost of one always-on instance — worth it for the demo.
 # --timeout 3600 + session affinity: long-lived WebSockets stay on that instance.
 # --allow-unauthenticated: the app checks Firebase ID tokens itself on every request.
 gcloud run deploy "$SERVICE" \
@@ -40,7 +42,7 @@ gcloud run deploy "$SERVICE" \
   --service-account "$SA" \
   --build-service-account "projects/${PROJECT}/serviceAccounts/${BUILD_SA}" \
   --allow-unauthenticated \
-  --min-instances 0 --max-instances 1 \
+  --min-instances "${MIN_INSTANCES:-0}" --max-instances 1 --cpu-boost \
   --timeout 3600 --session-affinity \
   --memory 512Mi --cpu 1 \
   --set-env-vars "^@^CORS_ORIGINS=${ORIGINS}@VERTEX_LOCATION=global" \

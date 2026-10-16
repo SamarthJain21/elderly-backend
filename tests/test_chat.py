@@ -809,3 +809,34 @@ def test_quick_replies_in_the_agents_voice_are_dropped() -> None:
     from app.agent.prompt import clean_quick_replies
     got = clean_quick_replies(["I am doing well", "Are you sleeping late, Rose?", "Shall I help you relax?", "Tell me a joke"], "Rose Devi")
     assert got == ["I am doing well", "Shall I help you relax?", "Tell me a joke"]
+
+
+@pytest.mark.anyio
+async def test_a_stalled_request_is_hedged_and_the_first_answer_wins() -> None:
+    import asyncio as aio
+
+    from app.agent.llm import GeminiChatModel
+
+    class StallOnce(_FakeModels):
+        n = 0
+
+        async def generate_content(self, *, model: str, contents: Any, config: Any) -> Any:
+            StallOnce.n += 1
+            if StallOnce.n == 1:
+                await aio.sleep(5)  # first request stalls
+            return await super().generate_content(model=model, contents=contents, config=config)
+
+    fake = StallOnce({"lite": '{"reply": "Hi", "quickReplies": ["a", "b", "c"]}'})
+    t0 = aio.get_running_loop().time()
+    r = await GeminiChatModel(_client(fake), ["lite"], per_call_timeout_s=2, hedge_after_s=0.05).complete("sys", [Turn("elder", "hi")], AgentReply)
+    assert r.reply == "Hi" and StallOnce.n == 2
+    assert aio.get_running_loop().time() - t0 < 1  # didn't wait for the stalled one
+
+
+@pytest.mark.anyio
+async def test_hedge_does_not_fire_when_the_model_answers_quickly() -> None:
+    from app.agent.llm import GeminiChatModel
+
+    fake = _FakeModels({"lite": '{"reply": "Hi", "quickReplies": []}'})
+    await GeminiChatModel(_client(fake), ["lite"], hedge_after_s=1.0).complete("sys", [Turn("elder", "hi")], AgentReply)
+    assert fake.tried == ["lite"]  # exactly one request
