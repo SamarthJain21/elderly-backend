@@ -80,3 +80,12 @@ def test_scan_failure_is_a_friendly_502(client: TestClient, monkeypatch: pytest.
     monkeypatch.setattr(rx_scan, "scan", boom)
     r = client.post("/medicines/scan", json={"image": PHOTO, "mimeType": "image/jpeg"})
     assert r.status_code == 502 and "type it in" in r.json()["detail"]
+
+
+def test_same_ingredient_as_a_listed_medicine_is_flagged(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = fake_gemini(monkeypatch, '{"medicines":[{"name":"Glycomet","strength":"500 mg","slots":["morning"],"sameAs":"metformin 500mg"},'
+                                     '{"name":"Telma 40","slots":["morning"],"sameAs":"Aspirin"}]}')
+    glycomet, telma = rx_scan.scan(b"img", "image/jpeg", MEALS, ["Metformin 500mg", "Amlodipine 5mg"]).medicines
+    assert glycomet.sameAs == "Metformin 500mg"        # matched to the list's own spelling
+    assert telma.sameAs is None                        # a name not on the list is ignored
+    assert "Already on their list: Metformin 500mg; Amlodipine 5mg" in calls[0]["contents"][1]

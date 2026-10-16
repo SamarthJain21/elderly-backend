@@ -6,6 +6,7 @@ import asyncio
 import base64
 import binascii
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
@@ -41,6 +42,7 @@ class ScanRequest(BaseModel):
     image: str = Field(min_length=100, max_length=_MAX_BYTES * 4 // 3 + 4, description="base64")
     mimeType: str
     meals: Meals = Meals()  # the elder's meal times: "1-0-1" lands at breakfast and dinner
+    existing: list[Annotated[str, Field(max_length=120)]] = Field(default_factory=list, max_length=30)  # flags a double dose
 
 
 @router.post("/scan")
@@ -53,7 +55,7 @@ async def scan(body: ScanRequest, user: CurrentUser) -> rx_scan.ScanResult:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "That photo didn't come through — try again") from None
     ratelimit.rx_scans.check(user.uid)
     try:
-        return await asyncio.to_thread(rx_scan.scan, image, body.mimeType, body.meals)
+        return await asyncio.to_thread(rx_scan.scan, image, body.mimeType, body.meals, body.existing)
     except Exception:  # noqa: BLE001 — the family can always type the medicines in
         log.warning("prescription scan failed", exc_info=True)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Couldn't read the photo right now — try again or type it in") from None
