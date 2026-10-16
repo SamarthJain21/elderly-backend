@@ -53,6 +53,7 @@ from app.agent.prompt import build_checkin_prompt, build_system_prompt, clean_qu
 from app.auth import AuthedUser, authenticate
 from app.checkin import MAX_TURNS, MOOD_LABEL, CheckIn, Mood, assess, checkin_id, merge, next_missing
 from app.checkin_store import LogEntry, TodayCheckIn
+from app.routers import insights_api
 from app.routers.reminders import all_reminders, save_reminder
 from app.routers.settings import load_rules
 from app.schedule import Reminder, local_today, reminders_for_day
@@ -264,6 +265,11 @@ class Session:
         await asyncio.to_thread(
             checkin_store.add_log, self.elder_id, LogEntry(message=summary, kind=kind, checkInId=c.id)
         )
+        # A finished check-in may complete a pattern (e.g. 2nd low-mood day in a row): tell the family once.
+        try:
+            await asyncio.to_thread(insights_api.new_drift_flags, self.elder_id, await self._elder())
+        except Exception:  # noqa: BLE001 — never fail the elder's check-in over an insights hiccup
+            log.exception("drift flags failed for elder %s", self.elder_id)
 
     async def start_checkin(self, mood: Mood | None) -> None:
         state = await self.today_checkin()

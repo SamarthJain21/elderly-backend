@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import alerts_api, approvals, chat, checkins, elders, me, people, reminders, settings
+from app.routers import alerts_api, approvals, insights_api, chat, checkins, elders, me, people, reminders, settings
 
 # Our own INFO logs (e.g. "turn timings …") go to stdout → Cloud Run logs. Uvicorn configures only its own loggers.
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -31,6 +31,7 @@ app.include_router(settings.router)
 app.include_router(approvals.router)
 app.include_router(people.router)
 app.include_router(alerts_api.router)
+app.include_router(insights_api.router)
 
 
 @app.get("/health")
