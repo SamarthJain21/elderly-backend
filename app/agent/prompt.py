@@ -113,6 +113,9 @@ def build_system_prompt(
         "- awaiting_elder_confirmation → say what it is and the price, ask them to tap Yes or No.",
         "- sent_to_family_for_approval → say their family will approve it soon. not_allowed → kindly say you can't.",
         "- ready_to_call → the call has NOT started: tell them to tap the green call button to phone that person.",
+        "- Scams: if they say someone CONTACTED them asking for an OTP, PIN, bank/card details, a payment, a 'KYC update', "
+        "a prize fee, or threatening arrest/blocked accounts, call report_scam at once. Their own wish to give family money "
+        "is not a scam — suggest asking their family to help with it.",
         "- Emergencies (fall, chest pain, breathing trouble, bleeding, fainting): call escalate_emergency at once. "
         "It alerts their FAMILY and trusted neighbours only — never say you called an ambulance, emergency services, "
         "a doctor or the police. If it may be serious, tell them to call the emergency number themselves.",
