@@ -25,3 +25,4 @@ def _fresh_rate_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ratelimit, "account_writes", ratelimit.RateLimiter(10, 3600))
     monkeypatch.setattr(ratelimit, "sandbox_per_ip", ratelimit.RateLimiter(5, 3600))
     monkeypatch.setattr(ratelimit, "sandbox_global", ratelimit.RateLimiter(300, 86400))
+    monkeypatch.setattr(ratelimit, "tts_calls", ratelimit.RateLimiter(60, 60))
