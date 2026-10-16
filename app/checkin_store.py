@@ -69,6 +69,8 @@ def recent_logs(elder_id: str, limit: int) -> list[LogEntry]:
 
 def schedule_of(elder_id: str) -> tuple[str, list[Day]]:
     rules = _db().collection("rules").document(elder_id).get().to_dict() or {}
+    if rules.get("checkInEnabled") is False:
+        return rules.get("checkInTime", "09:00"), []  # no check-in days: today is never due or "missed"
     return rules.get("checkInTime", "09:00"), rules.get("checkInDays", list(ALL_DAYS))
 
 

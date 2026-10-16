@@ -44,8 +44,9 @@ Days = Annotated[list[Day], AfterValidator(_unique_days)]
 
 
 class Sleep(BaseModel):
-    bedtime: HHMM
-    wakeTime: HHMM
+    """Either can be unknown: the family may skip it during setup."""
+    bedtime: HHMM | None = None
+    wakeTime: HHMM | None = None
 
 
 class Meals(BaseModel):
@@ -69,6 +70,7 @@ class Medication(BaseModel):
 
 
 class CheckInSchedule(BaseModel):
+    enabled: bool = True  # the family can skip the daily check-in; then no day counts as "missed"
     time: HHMM = "09:00"
     days: Days = Field(default_factory=lambda: list(ALL_DAYS), min_length=1)
 
