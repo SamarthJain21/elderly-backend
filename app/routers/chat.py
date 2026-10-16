@@ -278,6 +278,8 @@ class Session:
         await asyncio.to_thread(
             checkin_store.add_log, self.elder_id, LogEntry(message=summary, kind=kind, checkInId=c.id)
         )
+        # Family apps refresh now instead of on their next poll (a worrying answer shouldn't wait 15 s).
+        await live.broadcast(self.elder_id, {"type": "checkin_done", "kind": kind, "summary": summary}, "family")
         # A finished check-in may complete a pattern (e.g. 2nd low-mood day in a row): tell the family once.
         try:
             await asyncio.to_thread(insights_api.new_drift_flags, self.elder_id, await self._elder())
