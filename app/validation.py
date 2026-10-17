@@ -5,13 +5,20 @@ from __future__ import annotations
 import re
 from typing import Annotated
 
-from pydantic import AfterValidator, StringConstraints
+from pydantic import AfterValidator, StringConstraints, ValidationInfo
 
 _PHONE_CHARS = re.compile(r"^\+[\d\s\-()]+$")
 
 
-def _phone(v: str) -> str:
+# Reading back what's already saved: numbers from before these rules (e.g. '9592812463', no country code) must
+# not break the whole list — they're shown as they are, and the rules apply when the family next edits them.
+STORED = {"stored": True}
+
+
+def _phone(v: str, info: ValidationInfo) -> str:
     v = " ".join(v.split())
+    if info.context == STORED:
+        return v
     if not v.startswith("+"):
         raise ValueError("include the country code, e.g. +91 98765 43210")
     if not _PHONE_CHARS.match(v):

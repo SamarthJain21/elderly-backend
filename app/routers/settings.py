@@ -16,7 +16,7 @@ from app.autonomy import AutonomyRules, currency_for_timezone, default_rules
 from app.routers.elders import Language
 from app.tools import places
 from app.tools.geo import geocode_sync
-from app.validation import Name, Phone, ShortText
+from app.validation import STORED, Name, Phone, ShortText
 
 router = APIRouter(prefix="/elders/{elder_id}", tags=["settings"])
 
@@ -114,11 +114,11 @@ class ProfileUpdate(BaseModel):
 @router.get("/profile")
 def get_profile(elder_id: str, user: CurrentUser) -> ProfileUpdate:
     e = load_elder(user, elder_id)
-    return ProfileUpdate(
-        name=e["name"], phone=e["phone"], language=e["language"],
-        sharingTier=e.get("sharingTier", "daily_summary"), address=e.get("address"),
-        emergencyContacts=e.get("emergencyContacts", []),
-    )
+    return ProfileUpdate.model_validate({
+        "name": e["name"], "phone": e["phone"], "language": e["language"],
+        "sharingTier": e.get("sharingTier", "daily_summary"), "address": e.get("address"),
+        "emergencyContacts": e.get("emergencyContacts", []),
+    }, context=STORED)
 
 
 @router.put("/profile")
