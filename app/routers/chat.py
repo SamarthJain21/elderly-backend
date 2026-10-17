@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
+import re
 import time
 from typing import Annotated, Any, Literal
 
@@ -99,6 +100,9 @@ def frame_error(kind: str | None, raw: object, exc: ValidationError) -> str:
         if len(text) > 1000:
             return "That message is too long — please keep it under 1000 characters."
     return "Sorry, that didn't go through. Please try again."
+
+
+_NON_LATIN = re.compile(r"[\u0900-\u097F\u0E00-\u0E7F\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]")  # Devanagari, Thai, CJK, Hangul
 
 
 class TextFrame(BaseModel):
@@ -376,10 +380,15 @@ class Session:
             "remindAt (HH:MM, 24h) about an hour before — plus remindDate (YYYY-MM-DD) if it isn't today — or "
             "remindInMinutes for 'later'. Today in their timezone is " + local_today(elder.get("timezone") or "Asia/Kolkata").isoformat() + ". Only the three kinds exist — "
             "never suggest anything else that sounds like an action (no notes, lists, bookings, orders). Labels: max 5 "
-            "words, start with an emoji. Put them in `ideas`; reply and quickReplies can be empty.")
+            "words, start with an emoji. Put them in `ideas`; reply and quickReplies can be empty.") + (
+            "" if from_caretaker else
+            " LANGUAGE: these labels are for the family member, who reads English. Write every label in English, "
+            "whatever language the rules above say to reply in.")
         try:
             out = await asyncio.wait_for(self.model.complete(system, [Turn("elder", "(suggest)")], ChipIdeas), 15)
             chips = chips_from_ideas(out.ideas, call_name, call_phone)
+            if not from_caretaker:  # the family reads English: drop any label the model still wrote in Hindi/Thai
+                chips = [c for c in chips if not _NON_LATIN.search(c.label)]
         except Exception:  # noqa: BLE001 — chips are a nicety; never block the message
             log.warning("chip suggestions failed for elder %s", self.elder_id)
             chips = []
