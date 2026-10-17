@@ -64,6 +64,9 @@ def onboard_caretaker(body: CaretakerSignup, user: CurrentUser) -> Me:
     # Pending invites from other caretakers (keyed by lowercase email) attach on first sign-in.
     invite_ref = db.collection("invites").document((user.email or "").lower())
     invited: list[str] = (invite_ref.get().to_dict() or {}).get("elderIds", []) if user.email else []
+    # An invite can outlive its elder (account deleted since): attach only to elders that still exist.
+    if invited:
+        invited = [snap.id for snap in db.get_all([db.collection("elders").document(i) for i in invited]) if snap.exists]
     batch.set(db.collection("caretakers").document(user.uid), {
         "uid": user.uid,
         "name": body.name,
