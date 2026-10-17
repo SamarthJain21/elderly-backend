@@ -40,3 +40,4 @@ sandbox_global = RateLimiter(300, 86400)
 tts_calls = RateLimiter(60, 60)
 # Address search: one call per typed pause, plus the pick.
 places_calls = RateLimiter(60, 60)
+rx_scans = RateLimiter(20, 3600)  # prescription photos (vision calls)

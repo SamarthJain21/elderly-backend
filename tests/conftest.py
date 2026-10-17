@@ -27,6 +27,7 @@ def _fresh_rate_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ratelimit, "sandbox_global", ratelimit.RateLimiter(300, 86400))
     monkeypatch.setattr(ratelimit, "tts_calls", ratelimit.RateLimiter(60, 60))
     monkeypatch.setattr(ratelimit, "places_calls", ratelimit.RateLimiter(60, 60))
+    monkeypatch.setattr(ratelimit, "rx_scans", ratelimit.RateLimiter(20, 3600))
 
 
 @pytest.fixture(autouse=True)
