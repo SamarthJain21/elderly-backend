@@ -9,7 +9,7 @@ from google.cloud.firestore import Query
 from pydantic import BaseModel, Field, field_validator
 
 from app import firebase
-from app.validation import Name, Phone, ShortText
+from app.validation import STORED, Name, Phone, ShortText
 
 ContactKind = Literal["family", "friend", "neighbour", "volunteer", "doctor"]
 RequestStatus = Literal["open", "notified", "confirmed", "done", "cancelled"]
@@ -70,13 +70,13 @@ def _requests(elder_id: str):  # noqa: ANN202
 
 
 def list_contacts(elder_id: str) -> list[Contact]:
-    return sorted((Contact(**(d.to_dict() or {})) for d in _contacts(elder_id).stream()),
+    return sorted((Contact.model_validate(d.to_dict() or {}, context=STORED) for d in _contacts(elder_id).stream()),
                   key=lambda c: (c.kind != "family", c.name.lower()))
 
 
 def get_contact(elder_id: str, contact_id: str) -> Contact | None:
     snap = _contacts(elder_id).document(contact_id).get()
-    return Contact(**snap.to_dict()) if snap.exists else None
+    return Contact.model_validate(snap.to_dict(), context=STORED) if snap.exists else None
 
 
 def save_contact(elder_id: str, c: Contact) -> None:
