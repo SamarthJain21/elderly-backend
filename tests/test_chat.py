@@ -879,3 +879,21 @@ def test_a_bad_frame_says_what_went_wrong(store: Store, model: FakeModel) -> Non
         assert "too long" in ws.receive_json()["message"]
         ws.send_json({"type": "checkin_answers", "mood": "fantastic"})
         assert ws.receive_json()["message"] == "Sorry, that didn't go through. Please try again."
+
+
+def test_family_chips_are_in_english_even_for_a_hindi_speaking_elder(two_sockets: Store, model: FakeModel, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The elder's prompt says 'reply in Hindi'; chips for the family must still be English (any Hindi label is dropped)."""
+    from app.agent.chips import ChipIdea
+    from app.routers.chat import ChipIdeas
+    seen: list[str] = []
+
+    async def complete(system: str, history: list[Turn], schema: type[Any]) -> Any:
+        seen.append(system)
+        return ChipIdeas(reply="", ideas=[ChipIdea(label="📞 कमला जी को फ़ोन करें", kind="message"), ChipIdea(label="💬 Glad you went out!", kind="message")])
+    monkeypatch.setattr(model, "complete", complete)
+    with _family_pair() as (elder, care):
+        elder.send_json({"type": "family_reply", "text": "Went to the park with Mrs Gupta today"})
+        m = care.receive_json()["message"]
+        elder.receive_json()
+    assert [ch["label"] for ch in m["chips"]] == ["💬 Glad you went out!"]
+    assert "LANGUAGE: these labels are for the family member" in seen[-1]
