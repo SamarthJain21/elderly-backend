@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from app import contacts, firebase, ratelimit
 from app.access import load_elder
+from app.validation import with_country
 from app.auth import CurrentUser
 from app.contacts import Contact, ContactIn, HelpRequest
 
@@ -18,8 +19,9 @@ router = APIRouter(prefix="/elders/{elder_id}", tags=["people"])
 
 @router.get("/contacts")
 def list_contacts(elder_id: str, user: CurrentUser) -> list[Contact]:
-    load_elder(user, elder_id, caretaker_only=True)
-    return contacts.list_contacts(elder_id)
+    elder = load_elder(user, elder_id, caretaker_only=True)
+    tz = elder.get("timezone")
+    return [c.model_copy(update={"phone": with_country(c.phone, tz)}) for c in contacts.list_contacts(elder_id)]
 
 
 @router.post("/contacts", status_code=status.HTTP_201_CREATED)

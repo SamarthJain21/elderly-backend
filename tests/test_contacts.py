@@ -69,3 +69,11 @@ def test_a_number_saved_before_country_codes_were_required_still_lists(monkeypat
     assert [c.phone for c in contacts_mod.list_contacts("e1")] == ["9592812463"]
     with pytest.raises(ValidationError):  # …but new input still needs the country code
         contacts_mod.Contact(**old)
+
+
+def test_old_numbers_get_the_country_of_the_elders_timezone() -> None:
+    from app.validation import with_country
+    assert with_country("9592812463", "Asia/Kolkata") == "+91 9592812463"
+    assert with_country("081 234 5678", "Asia/Bangkok") == "+66 812345678"
+    assert with_country("+91 98765 43210", "Asia/Bangkok") == "+91 98765 43210"   # already has one: untouched
+    assert with_country("", "Asia/Kolkata") == ""

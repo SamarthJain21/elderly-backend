@@ -30,5 +30,19 @@ def _phone(v: str, info: ValidationInfo) -> str:
 
 
 Phone = Annotated[str, AfterValidator(_phone)]
+
+# The country an elder's timezone implies, for numbers saved before the country code was required.
+_DIAL_BY_TZ = {"Asia/Kolkata": "+91", "Asia/Calcutta": "+91", "Asia/Bangkok": "+66", "Asia/Singapore": "+65",
+               "Asia/Kuala_Lumpur": "+60", "Asia/Dubai": "+971", "Asia/Tokyo": "+81", "Asia/Seoul": "+82"}
+
+
+def with_country(phone: str, tz: str | None) -> str:
+    """'9592812463' (saved before country codes were required) → '+91 9592812463' for an elder in India.
+    Anything that already has a + (or isn't just digits) is left as it is."""
+    v = " ".join(str(phone).split())
+    digits = v.replace(" ", "").replace("-", "")
+    if not v or v.startswith("+") or not digits.isdigit():
+        return v
+    return f"{_DIAL_BY_TZ.get(tz or '', '+91')} {digits.lstrip('0')}"
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 ShortText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=50)]
