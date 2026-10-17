@@ -36,7 +36,7 @@ async def test_a_ride_to_a_saved_place_goes_to_its_exact_spot(monkeypatch: pytes
     monkeypatch.setattr(executor, "_gated", gated)
     elder = {"name": "Rose", "timezone": "Asia/Kolkata", "places": [CLINIC],
              "address": {"line1": "12 MG Road", "city": "Pune", "lat": 18.52, "lng": 73.87}}
-    ctx = executor.ToolContext(elder_id="e1", elder=elder, rules=default_rules("INR"), request_text="", actor_uid="e1")
+    ctx = executor.ToolContext(elder_id="e1", elder=elder, rules=default_rules("INR"), request_text="take me to the clinic", actor_uid="e1")
     await executor.run_tool(ctx, "book_ride", {"destination": "the clinic"})
     assert captured["args"]["destination"] == "Clinic"
     assert "18.531200" in captured["url"] and "73.877000" in captured["url"]   # dropoff = the saved place
@@ -68,3 +68,27 @@ async def test_a_reported_scam_warns_the_family_and_tells_the_helper_what_to_say
     assert r["status"] == "family_warned" and "do NOT share" in r["instruction"]
     assert logs[0][0] == "alert" and "Possible scam" in logs[0][1]
     assert frames[0]["type"] == "notice" and sent[0][0].startswith("⚠️ Possible scam")
+
+
+@pytest.mark.anyio
+async def test_a_taxi_without_a_destination_asks_where_offering_saved_places(monkeypatch: pytest.MonkeyPatch) -> None:
+    """'Taxi book kijiye' said nothing about where: the model guessed the clinic. Now it has to ask."""
+    async def no_booking(*_: Any, **__: Any) -> None:
+        pytest.fail("must not quote a ride nobody asked for")
+    monkeypatch.setattr(executor, "_gated", no_booking)
+    elder = {"name": "Kamla", "timezone": "Asia/Kolkata", "places": [CLINIC, TEMPLE],
+             "address": {"line1": "B-14", "city": "New Delhi", "lat": 28.56, "lng": 77.24}}
+    ctx = executor.ToolContext(elder_id="e1", elder=elder, rules=default_rules("INR"), request_text="taxi book kijiye",
+                               actor_uid="e1", heard="taxi book kijiye")
+    out = await executor.run_tool(ctx, "book_ride", {"destination": "Clinic", "as_said": ""})
+    assert out["status"] == "need_destination" and out["savedPlaces"] == ["Clinic", "Priya's home"]
+    out = await executor.run_tool(ctx, "book_ride", {"destination": "Clinic", "as_said": "clinic"})  # made up
+    assert out["status"] == "need_destination"
+
+
+def test_where_they_said_counts_in_any_language_and_from_just_before() -> None:
+    assert executor._was_said("मंदिर", "मुझे मंदिर जाने के लिए टैक्सी चाहिए")
+    assert executor._was_said("Ruby Hall Clinic", "take me to ruby hall please")
+    assert executor._was_said("temple", "I want to go to the temple now")            # said a turn earlier, then "now"
+    assert not executor._was_said("clinic", "taxi book kijiye")
+    assert not executor._was_said("", "take me to the clinic")

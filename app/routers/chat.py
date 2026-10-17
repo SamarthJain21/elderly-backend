@@ -247,8 +247,9 @@ class Session:
         elder = {**elder, "_contacts": [f"{p.name} ({p.relationship or p.kind}{', volunteer: ' + ', '.join(p.skills) if p.kind == 'volunteer' else ''})"
                                         for p in people]}
         prompt = build_system_prompt(elder, today, now, pending.summary() if pending else None)
+        said_before = [t.text for t in turns if t.role == "elder"][-3:]
         ctx = ToolContext(elder_id=self.elder_id, elder=elder, rules=rules, request_text=text, actor_uid=self.user.uid,
-                          people=people)
+                          people=people, heard=" ".join([*said_before, text]))
 
         async def execute(name: str, args: dict[str, Any]) -> dict[str, Any]:
             if name == "answer_pending_confirmation" and pending is not None:
