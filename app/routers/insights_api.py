@@ -33,10 +33,13 @@ def _summary_doc(elder_id: str, day: dt.date):  # noqa: ANN202
     return firebase.get_db().collection("elders").document(elder_id).collection("insights").document(day.isoformat())
 
 
+_NOTE_VERSION = "v2-short"  # bump when the prompt changes, so cached notes are rewritten
+
+
 async def _summary(model: ChatModel, elder: dict[str, Any], elder_id: str, ins: Insights, today: dt.date) -> str | None:
-    """2–3 sentences for the family, written from the computed numbers only. Cached until the numbers change."""
+    """Two short sentences for the family, from the computed numbers only. Cached until the numbers (or prompt) change."""
     facts = ins.model_dump(mode="json", exclude={"summary"})
-    key = hashlib.sha256(json.dumps(facts, sort_keys=True).encode()).hexdigest()[:16]
+    key = hashlib.sha256((_NOTE_VERSION + json.dumps(facts, sort_keys=True)).encode()).hexdigest()[:16]
     ref = _summary_doc(elder_id, today)
     cached = (await asyncio.to_thread(ref.get)).to_dict() or {}
     if cached.get("key") == key:
@@ -45,9 +48,10 @@ async def _summary(model: ChatModel, elder: dict[str, Any], elder_id: str, ins: 
     system = (
         f"You write a short weekly note for the family of {first}, an older adult, from their daily check-ins. "
         "Use ONLY the facts given (mood is 1=bad … 5=great; percentages are of days with an answer). "
-        "2-3 warm, plain sentences in English: what went well, anything to keep an eye on, and one gentle, "
-        "practical suggestion if something is off (e.g. a call, a doctor visit if concerns persist). "
-        "No diagnosis, no alarmism, no invented details. Put the note in `reply`; quickReplies empty.\n\n"
+        "At most 2 short sentences in English, under 35 words in all: the most useful thing to know, then — only "
+        "if something is off — one concrete thing to do (a call, a doctor visit if it persists). Warm but direct, "
+        "like a sibling texting: no filler (\"it might be helpful\", \"wonderful way to\"), no diagnosis, no alarmism, "
+        "no invented details. Put the note in `reply`; quickReplies empty.\n\n"
         f"Facts: {json.dumps(facts)}"
     )
     try:
