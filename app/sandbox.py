@@ -31,6 +31,14 @@ SandboxLanguage = Literal["en-US", "hi-IN", "hi-Latn", "th-TH"]
 FAKE_PHONE_PREFIX = "+000"  # app/sms.py never texts these
 
 
+# What the demo's extra volunteers do (relationship, skills) — broad, so the helper's skill words match.
+_VOLUNTEER_ROLES = (
+    ("handyman", ("repairs", "home repair", "fix", "handyman", "electrical", "carpentry", "appliances", "plumbing")),
+    ("tech helper", ("tech help", "phone", "tv", "internet", "video call", "computer")),
+    ("companion", ("company", "walk", "shopping", "groceries", "errands", "doctor visit")),
+)
+
+
 @dataclass(frozen=True)
 class Persona:
     elder: str
@@ -49,6 +57,9 @@ class Persona:
     faces: tuple[str, str, str, str, str] = ("rose", "emma", "tom", "david", "lewis")
     # Saved places for rides (name as the elder says it, street, lat, lng) — the 🚕 tile offers them.
     places: tuple[tuple[str, str, float, float], ...] = ()
+    # Extra trusted volunteers (name, face): a handyman, a tech helper and a companion, so "Fix something", "help
+    # with my phone" or "someone to walk with" always finds someone in the demo.
+    volunteers: tuple[tuple[str, str], tuple[str, str], tuple[str, str]] = (("Ramesh", "alex"), ("Anita", "ben"), ("Joseph", "mia"))
 
 
 PERSONAS: dict[SandboxLanguage, Persona] = {
@@ -62,6 +73,7 @@ PERSONAS: dict[SandboxLanguage, Persona] = {
         places=(("Clinic", "Ruby Hall Clinic, 40 Sassoon Road", 18.5308, 73.8770),
                 ("Emma's home", "Lane 5, Koregaon Park", 18.5362, 73.8940),
                 ("Market", "Mahatma Phule Mandai", 18.5122, 73.8560)),
+        volunteers=(("Ramesh", "alex"), ("Anita", "ben"), ("Joseph", "mia")),
     ),
     "hi-IN": Persona(
         "Kamla", "Priya", "daughter", "Asia/Kolkata", "New Delhi",
@@ -74,6 +86,7 @@ PERSONAS: dict[SandboxLanguage, Persona] = {
         places=(("क्लिनिक", "Moolchand Hospital, Lala Lajpat Rai Marg", 28.5649, 77.2342),
                 ("मंदिर", "ISKCON Temple, East of Kailash", 28.5562, 77.2440),
                 ("प्रिया का घर", "C-21 Defence Colony", 28.5741, 77.2320)),
+        volunteers=(("Ramesh", "alex"), ("Anita", "ben"), ("Joseph", "emma")),
     ),
     "hi-Latn": Persona(  # Hinglish: same household as Hindi; the helper writes Roman-script Hindi
         "Kamla", "Priya", "daughter", "Asia/Kolkata", "New Delhi",
@@ -86,6 +99,7 @@ PERSONAS: dict[SandboxLanguage, Persona] = {
         places=(("Clinic", "Moolchand Hospital, Lala Lajpat Rai Marg", 28.5649, 77.2342),
                 ("Mandir", "ISKCON Temple, East of Kailash", 28.5562, 77.2440),
                 ("Priya ka ghar", "C-21 Defence Colony", 28.5741, 77.2320)),
+        volunteers=(("Ramesh", "alex"), ("Anita", "ben"), ("Joseph", "emma")),
     ),
     "th-TH": Persona(
         "Somsri", "Nok", "daughter", "Asia/Bangkok", "Bangkok",
@@ -98,6 +112,7 @@ PERSONAS: dict[SandboxLanguage, Persona] = {
         places=(("คลินิก", "Bumrungrad Hospital, Sukhumvit Soi 3", 13.7466, 100.5527),
                 ("วัด", "Wat Thatthong, Sukhumvit 61", 13.7225, 100.5868),
                 ("บ้านนก", "Phahonyothin Soi 7, Ari", 13.7797, 100.5446)),
+        volunteers=(("Niran", "alex"), ("Ploy", "ben"), ("Arthit", "lewis")),
     ),
 }
 
@@ -211,6 +226,8 @@ def create_sandbox(language: SandboxLanguage, now: dt.datetime | None = None) ->
             Contact(name=p.neighbour, phone=_fake_phone(), kind="volunteer", relationship="neighbour",
                     skills=["plumbing", "shopping", "tech help"], trusted=True, face=p.faces[3]),
             Contact(name=p.doctor, phone=_fake_phone(), kind="doctor", relationship="doctor", face=p.faces[4]),
+            *[Contact(name=n, phone=_fake_phone(), kind="volunteer", relationship=rel, skills=list(skills), trusted=True, face=f)
+              for (n, f), (rel, skills) in zip(p.volunteers, _VOLUNTEER_ROLES)],
         ]
         contacts = db.collection("elders").document(elder_id).collection("contacts")
         for c in people:
