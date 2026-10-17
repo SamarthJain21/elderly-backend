@@ -13,7 +13,7 @@ from app.routers import elder_access  # setup links + phone/PIN sign-in for elde
 from app.routers import voice_api  # natural read-aloud voice
 from app.routers import stt_api  # speech-to-text for browsers without it (Brave, Firefox)
 from app.routers import places_api  # address search
-from app.routers import medicines_api  # medicine-name check
+from app.routers import medicines_api  # prescription scan
 from app.routers import device_api  # the elder app's settings, managed by family too
 from app.routers import admin_api  # cost dashboard
 from app.routers import places_saved_api  # saved places for rides
