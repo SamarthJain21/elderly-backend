@@ -30,6 +30,7 @@ def erase_elder(elder_id: str, *, also_caretakers: Sequence[str] = ()) -> None:
         for snap in db.collection(col).where(filter=FieldFilter("elderId", "==", elder_id)).stream():
             snap.reference.delete()
     db.collection("rules").document(elder_id).delete()
+    db.collection("elder_pins").document(elder_id).delete()  # sign-in PIN hash (app/elder_pin.py)
     db.recursive_delete(db.collection("elders").document(elder_id))
     db.collection("users").document(elder_id).delete()
     _delete_auth_user(elder_id)
