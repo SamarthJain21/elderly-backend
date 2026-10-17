@@ -84,3 +84,37 @@ def test_model_dated_reminder_is_kept() -> None:
     chips = chips_from_ideas([ChipIdea(label="⏰ Remind me at 3pm", kind="remind", remindAt="15:00", remindDate="2026-10-16",
                                        remindTitle="Doctor appointment")], None, None)
     assert isinstance(chips[0].action, RemindAction) and chips[0].action.date == dt.date(2026, 10, 16)
+
+
+def test_family_message_with_dated_remind_chip_saves_firestore_safe_types(monkeypatch):
+    """A 'remind on Sunday' chip holds a datetime.date — Firestore rejects those, which silently lost the message."""
+    import datetime as dt
+
+    from app.agent import family
+    from app.agent.chips import Chip, RemindAction
+
+    saved = {}
+
+    class _Doc:
+        def set(self, d):
+            saved.update(d)
+
+    class _Col:
+        def document(self, _id):
+            return _Doc()
+
+    monkeypatch.setattr(family, "_col", lambda _e: _Col())
+    chip = Chip(label="⏰ Remind me", kind="action", action=RemindAction(title="Visit", at="10:00", date=dt.date(2026, 10, 18)))
+    msg = family.FamilyMessage(sender="caretaker", senderUid="u", senderName="Priya", text="I will visit on Sunday", chips=[chip])
+    family.save("e1", msg)
+
+    def plain_date(v):
+        if isinstance(v, dict):
+            return any(plain_date(x) for x in v.values())
+        if isinstance(v, list):
+            return any(plain_date(x) for x in v)
+        return isinstance(v, dt.date) and not isinstance(v, dt.datetime)
+
+    assert not plain_date(saved)
+    assert isinstance(saved["createdAt"], dt.datetime)  # still a timestamp, so ordering works
+    assert family.FamilyMessage(**saved).chips[0].action.date == dt.date(2026, 10, 18)  # reads back

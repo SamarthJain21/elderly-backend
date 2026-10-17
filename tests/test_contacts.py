@@ -56,3 +56,24 @@ def test_names_are_trimmed_and_cannot_be_blank() -> None:
     assert ContactIn(name="  Ravi  ", phone="+91 98765 43210").name == "Ravi"
     with pytest.raises(ValueError):
         ContactIn(name="   ", phone="+91 98765 43210")
+
+
+def test_a_number_saved_before_country_codes_were_required_still_lists(monkeypatch: pytest.MonkeyPatch) -> None:
+    """'9592812463' was accepted once; reading it back must not break the whole contacts list."""
+    from pydantic import ValidationError
+
+    from app import contacts as contacts_mod
+    old = {"id": "c1", "name": "Ravi", "phone": "9592812463", "kind": "family"}
+    snap = type("S", (), {"to_dict": lambda _s: old})()
+    monkeypatch.setattr(contacts_mod, "_contacts", lambda eid: type("C", (), {"stream": lambda _s: [snap]})())
+    assert [c.phone for c in contacts_mod.list_contacts("e1")] == ["9592812463"]
+    with pytest.raises(ValidationError):  # …but new input still needs the country code
+        contacts_mod.Contact(**old)
+
+
+def test_old_numbers_get_the_country_of_the_elders_timezone() -> None:
+    from app.validation import with_country
+    assert with_country("9592812463", "Asia/Kolkata") == "+91 9592812463"
+    assert with_country("081 234 5678", "Asia/Bangkok") == "+66 812345678"
+    assert with_country("+91 98765 43210", "Asia/Bangkok") == "+91 98765 43210"   # already has one: untouched
+    assert with_country("", "Asia/Kolkata") == ""

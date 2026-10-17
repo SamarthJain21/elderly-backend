@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     # Local dev only. On Cloud Run, leave unset and use the service's identity (ADC).
     firebase_credentials: Path | None = Path("service-account.json")
     cors_origins: list[str] = ["http://localhost:5173"]
+    # Extra origins by pattern, e.g. ngrok tunnels for phone testing (their URLs change every session).
+    # Local .env only: CORS_ORIGIN_REGEX='https://[a-z0-9-]+\.ngrok-free\.(app|dev)'. Unset in production.
+    cors_origin_regex: str | None = None
     # Google accounts that can open the cost dashboard (/admin). Set ADMIN_EMAILS='["you@gmail.com"]'.
     admin_emails: list[str] = []
     # Where notifications open the app.

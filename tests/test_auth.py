@@ -52,7 +52,7 @@ def test_me_with_invalid_token_is_401(client: TestClient) -> None:
 def test_me_returns_role_for_onboarded_user(client: TestClient) -> None:
     r = client.get("/me", headers=h("elder"))
     assert r.status_code == 200
-    assert r.json() == {"uid": "e1", "email": "e@elderly.app", "role": "elder", "admin": False}
+    assert r.json() == {"uid": "e1", "email": "e@elderly.app", "role": "elder", "admin": False, "tourDone": False}
 
 
 def test_me_is_404_before_onboarding(client: TestClient) -> None:
@@ -82,3 +82,21 @@ def test_temp_password_uses_only_unambiguous_chars() -> None:
     pw = generate_temp_password()
     assert len(pw) == 10
     assert set(pw) <= set(_PASSWORD_ALPHABET)
+
+
+def test_tour_is_remembered_for_the_account_not_the_browser(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert client.get("/me", headers=h("elder")).json()["tourDone"] is False
+    writes: list[dict[str, Any]] = []
+    doc_ref = type("Ref", (), {"update": lambda self, d: writes.append(d)})()
+    db = type("Db", (), {"collection": lambda self, _c: type("Col", (), {"document": lambda self, _u: doc_ref})()})()
+    monkeypatch.setattr(firebase, "get_db", lambda: db)
+    assert client.post("/me/tour-done", headers=h("elder")).status_code == 204
+    assert list(writes[0]) == ["tourDoneAt"]
+
+    monkeypatch.setattr(firebase, "get_user_doc", lambda uid: {"role": "elder", "tourDoneAt": "2026-10-17"})
+    assert client.get("/me", headers=h("elder")).json()["tourDone"] is True
+    assert client.post("/me/tour-done", headers=h("elder")).status_code == 204 and len(writes) == 1  # no rewrite
+
+
+def test_tour_done_needs_an_onboarded_account(client: TestClient) -> None:
+    assert client.post("/me/tour-done", headers=h("new-google")).status_code == 404

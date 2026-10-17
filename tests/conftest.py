@@ -25,8 +25,11 @@ def _fresh_rate_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ratelimit, "account_writes", ratelimit.RateLimiter(10, 3600))
     monkeypatch.setattr(ratelimit, "sandbox_per_ip", ratelimit.RateLimiter(20, 3600))
     monkeypatch.setattr(ratelimit, "sandbox_global", ratelimit.RateLimiter(300, 86400))
+    monkeypatch.setattr(ratelimit, "pin_logins", ratelimit.RateLimiter(30, 3600))
     monkeypatch.setattr(ratelimit, "tts_calls", ratelimit.RateLimiter(60, 60))
+    monkeypatch.setattr(ratelimit, "ask_calls", ratelimit.RateLimiter(30, 3600))
     monkeypatch.setattr(ratelimit, "places_calls", ratelimit.RateLimiter(60, 60))
+    monkeypatch.setattr(ratelimit, "rx_scans", ratelimit.RateLimiter(20, 3600))
 
 
 @pytest.fixture(autouse=True)
@@ -43,3 +46,10 @@ def _no_push(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     sent: list[tuple[str, str]] = []
     monkeypatch.setattr(push, "notify_family", lambda elder, title, body, path="/caretaker": sent.append((title, body)))
     return sent
+
+
+@pytest.fixture(autouse=True)
+def _no_translate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Family-chat translation calls Gemini; tests get a marker instead (tests/test_translate.py covers it)."""
+    from app.agent import translate
+    monkeypatch.setattr(translate, "translate", lambda text, target, source=None, writer=None, context=None: f"[{target}] {text}" if translate.needs_translation(text, target, source) else None)

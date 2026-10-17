@@ -29,6 +29,9 @@ class FamilyMessage(BaseModel):
     usedChips: list[int] = Field(default_factory=list)  # action chips already carried out
     quickReplies: list[str] = Field(default_factory=list)  # legacy (pre-chips) documents only
     viaAgent: bool = False  # elder asked the agent to pass it on
+    # The same message in the receiver's language (family chat across languages); None = same language.
+    translated: str | None = None
+    translatedTo: str | None = None
     createdAt: dt.datetime = Field(default_factory=lambda: dt.datetime.now(dt.UTC))
 
     @model_validator(mode="after")
@@ -43,7 +46,10 @@ def _col(elder_id: str):  # noqa: ANN202
 
 
 def save(elder_id: str, msg: FamilyMessage) -> None:
-    _col(elder_id).document(msg.id).set(msg.model_dump())
+    doc = msg.model_dump()
+    # Chips may hold a datetime.date (a remind-on-Sunday chip), which Firestore can't store; keep createdAt a timestamp.
+    doc["chips"] = [c.model_dump(mode="json") for c in msg.chips]
+    _col(elder_id).document(msg.id).set(doc)
 
 
 def get(elder_id: str, msg_id: str) -> FamilyMessage | None:

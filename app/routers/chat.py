@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
+import re
 import time
 from typing import Annotated, Any, Literal
 
@@ -34,7 +35,7 @@ from pydantic import BaseModel, Field, ValidationError
 from app import alerts as alerts_mod  # tests swap its storage
 from app import checkin_store, contacts, push, ratelimit
 from app.access import load_elder
-from app.agent import family, live, messages, voice_push
+from app.agent import family, live, messages, translate, voice_push
 from app.agent.chips import (
     FALLBACK_FOR_CARETAKER,
     FALLBACK_FOR_ELDER,
@@ -86,6 +87,7 @@ router = APIRouter()
 AUTH_TIMEOUT_S = 10
 MODEL_TIMEOUT_S = 45
 HISTORY_TURNS = 20
+_NON_LATIN = re.compile(r"[\u0900-\u097F\u0E00-\u0E7F\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]")  # Devanagari, Thai, CJK, Hangul
 HISTORY_ON_CONNECT = 50
 
 
@@ -99,6 +101,23 @@ def frame_error(kind: str | None, raw: object, exc: ValidationError) -> str:
         if len(text) > 1000:
             return "That message is too long — please keep it under 1000 characters."
     return "Sorry, that didn't go through. Please try again."
+
+
+def _safe_translate(text: str, target: str, source: str | None, writer: str | None, context: str | None = None) -> str | None:
+    try:
+        return translate.translate(text, target, source, writer, context)
+    except Exception:  # noqa: BLE001 — the original is always shown
+        log.warning("family translation failed", exc_info=True)
+        return None
+
+
+def _writer(elder: dict, name: str) -> str:
+    """"Priya (daughter)" when the elder's contacts name her with a relationship — for gendered languages."""
+    first = name.casefold().split()[:1]
+    for c in elder.get("emergencyContacts") or []:
+        if first and str(c.get("name", "")).casefold().split()[:1] == first and c.get("relationship"):
+            return f"{name} ({c['relationship']})"
+    return name
 
 
 class TextFrame(BaseModel):
@@ -376,10 +395,15 @@ class Session:
             "remindAt (HH:MM, 24h) about an hour before — plus remindDate (YYYY-MM-DD) if it isn't today — or "
             "remindInMinutes for 'later'. Today in their timezone is " + local_today(elder.get("timezone") or "Asia/Kolkata").isoformat() + ". Only the three kinds exist — "
             "never suggest anything else that sounds like an action (no notes, lists, bookings, orders). Labels: max 5 "
-            "words, start with an emoji. Put them in `ideas`; reply and quickReplies can be empty.")
+            "words, start with an emoji. Put them in `ideas`; reply and quickReplies can be empty.") + (
+            "" if from_caretaker else
+            " LANGUAGE: these labels are for the family member, who reads English. Write every label in English, "
+            "whatever language the rules above say to reply in.")
         try:
             out = await asyncio.wait_for(self.model.complete(system, [Turn("elder", "(suggest)")], ChipIdeas), 15)
             chips = chips_from_ideas(out.ideas, call_name, call_phone)
+            if not from_caretaker:  # the family reads English: drop any label the model still wrote in Hindi/Thai
+                chips = [c for c in chips if not _NON_LATIN.search(c.label)]
         except Exception:  # noqa: BLE001 — chips are a nicety; never block the message
             log.warning("chip suggestions failed for elder %s", self.elder_id)
             chips = []
@@ -388,13 +412,25 @@ class Session:
     async def on_family(self, text: str) -> None:
         """Caretaker → elder, or elder → caretakers. Delivered to everyone on the family channel."""
         elder = await self._elder()
+        # Translate for the receiver (elder's language ↔ English for family) while the chips are being made.
+        to_caretaker = self.user.role != "caretaker"
+        elder_lang = elder.get("language", "en-US")
+        target, source = ("en-US", elder_lang) if to_caretaker else (elder_lang, None)  # family may write any language
+        name = await asyncio.to_thread(family.caretaker_name, self.user.uid) if not to_caretaker else ""
+        writer = _writer(elder, name) if not to_caretaker else f"{(elder.get('name') or 'the elder').split()[0]} (the older family member)"
+        # What this answers — the other side's last message — so a short reply isn't read as a question.
+        other = "caretaker" if to_caretaker else "elder"
+        last = next((m for m in reversed(await asyncio.to_thread(family.recent, self.elder_id, 6)) if m.sender == other), None)
+        tr = asyncio.create_task(asyncio.to_thread(_safe_translate, text, target, source, writer, last.text if last else None))
         if self.user.role == "caretaker":
-            name = await asyncio.to_thread(family.caretaker_name, self.user.uid)
             msg = FamilyMessage(sender="caretaker", senderUid=self.user.uid, senderName=name, text=text,
                                 chips=await self._make_chips(elder, True, name, text))
         else:
             msg = FamilyMessage(sender="elder", senderUid=self.user.uid, senderName=elder.get("name", ""), text=text,
                                 chips=await self._make_chips(elder, False, elder.get("name", ""), text))
+        translated = await tr
+        if translated:
+            msg.translated, msg.translatedTo = translated, target
         await asyncio.to_thread(family.save, self.elder_id, msg)
         await live.broadcast(self.elder_id, {"type": "family_message", "message": msg.model_dump(mode="json")}, "family")
         if self.user.role == "elder":

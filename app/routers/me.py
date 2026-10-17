@@ -17,6 +17,7 @@ class Me(BaseModel):
     email: str | None
     role: Role
     admin: bool = False  # can open the cost dashboard
+    tourDone: bool = False  # finished the app tour on some device: a new phone or browser skips it
 
 
 @router.get("/me")
@@ -29,7 +30,16 @@ def get_me(user: CurrentUser) -> Me:
         ref = firebase.get_db().collection("caretakers").document(user.uid)
         if (ref.get().to_dict() or {}).get("photoUrl") != user.picture:
             ref.update({"photoUrl": user.picture})
-    return Me(uid=user.uid, email=user.email, role=user.role, admin=is_admin(user.email))
+    return Me(uid=user.uid, email=user.email, role=user.role, admin=is_admin(user.email), tourDone=user.tour_done)
+
+
+@router.post("/me/tour-done", status_code=status.HTTP_204_NO_CONTENT)
+def tour_done(user: CurrentUser) -> None:
+    """Finished (or closed) the app tour: remembered for the account, not just this browser."""
+    if user.role is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not onboarded")
+    if not user.tour_done:
+        firebase.get_db().collection("users").document(user.uid).update({"tourDoneAt": SERVER_TIMESTAMP})
 
 
 class CaretakerSignup(BaseModel):

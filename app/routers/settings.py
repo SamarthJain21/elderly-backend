@@ -8,7 +8,7 @@ from typing import Any, Literal
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from app import firebase
+from app import elder_pin, firebase
 from app.agent import live
 from app.access import load_elder
 from app.auth import CurrentUser
@@ -16,7 +16,7 @@ from app.autonomy import AutonomyRules, currency_for_timezone, default_rules
 from app.routers.elders import Language
 from app.tools import places
 from app.tools.geo import geocode_sync
-from app.validation import Name, Phone, ShortText
+from app.validation import STORED, Name, Phone, ShortText, with_country
 
 router = APIRouter(prefix="/elders/{elder_id}", tags=["settings"])
 
@@ -114,11 +114,12 @@ class ProfileUpdate(BaseModel):
 @router.get("/profile")
 def get_profile(elder_id: str, user: CurrentUser) -> ProfileUpdate:
     e = load_elder(user, elder_id)
-    return ProfileUpdate(
-        name=e["name"], phone=e["phone"], language=e["language"],
-        sharingTier=e.get("sharingTier", "daily_summary"), address=e.get("address"),
-        emergencyContacts=e.get("emergencyContacts", []),
-    )
+    tz = e.get("timezone")
+    return ProfileUpdate.model_validate({
+        "name": e["name"], "phone": with_country(e["phone"], tz), "language": e["language"],
+        "sharingTier": e.get("sharingTier", "daily_summary"), "address": e.get("address"),
+        "emergencyContacts": [{**c, "phone": with_country(c.get("phone", ""), tz)} for c in e.get("emergencyContacts", [])],
+    }, context=STORED)
 
 
 @router.put("/profile")
@@ -138,4 +139,6 @@ def put_profile(elder_id: str, body: ProfileUpdate, user: CurrentUser) -> Profil
     # users/{uid} mirrors name + language (used for login display and agent language).
     batch.update(db.collection("users").document(elder_id), {"displayName": body.name, "language": body.language})
     batch.commit()
+    if body.phone != elder.get("phone"):
+        elder_pin.update_phone(elder_id, body.phone)  # the sign-in PIN follows the new number
     return body

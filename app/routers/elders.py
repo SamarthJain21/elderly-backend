@@ -15,7 +15,7 @@ from app.access import load_elder
 from app.auth import Caretaker, CurrentUser
 from app.config import get_settings
 from app.schedule import Assessment, CheckInSchedule, Meals, Medication, Sleep, medication_reminders
-from app.validation import Name, Phone
+from app.validation import Name, Phone, with_country
 
 router = APIRouter(prefix="/elders", tags=["elders"])
 
@@ -152,7 +152,7 @@ def get_elder(elder_id: str, user: CurrentUser) -> ElderProfile:
     return ElderProfile(
         elderId=elder_id,
         name=elder["name"],
-        phone=elder["phone"],
+        phone=with_country(elder["phone"], elder.get("timezone")),
         language=elder["language"],
         sharingTier=elder.get("sharingTier", "daily_summary"),
         assessment=_assessment_from(elder, rules_snap.to_dict() or {}),
