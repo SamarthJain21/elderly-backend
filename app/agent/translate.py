@@ -21,6 +21,10 @@ _PROMPT = (
 )
 
 
+def language_name(lang: str) -> str:
+    return _NAMES.get(lang, "English")
+
+
 def needs_translation(text: str, target: str, source: str | None = None) -> bool:
     """Nothing to translate (emoji only), or both sides use the same language. Without a known source, plain
     ASCII is taken as already English."""

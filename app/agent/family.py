@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app import firebase
 from app.agent.chips import Chip
+from app.rx_scan import DraftMedicine
 
 
 class FamilyMessage(BaseModel):
@@ -32,6 +33,11 @@ class FamilyMessage(BaseModel):
     # The same message in the receiver's language (family chat across languages); None = same language.
     translated: str | None = None
     translatedTo: str | None = None
+    # A photo (app/agent/photos.py): its id, a one-line description in the reader's language (read aloud), and — for
+    # an elder's prescription photo — the medicines read from it, for the family to review.
+    photoId: str | None = None
+    photoAlt: str | None = None
+    rx: list[DraftMedicine] | None = None
     createdAt: dt.datetime = Field(default_factory=lambda: dt.datetime.now(dt.UTC))
 
     @model_validator(mode="after")
@@ -50,6 +56,10 @@ def save(elder_id: str, msg: FamilyMessage) -> None:
     # Chips may hold a datetime.date (a remind-on-Sunday chip), which Firestore can't store; keep createdAt a timestamp.
     doc["chips"] = [c.model_dump(mode="json") for c in msg.chips]
     _col(elder_id).document(msg.id).set(doc)
+
+
+def set_rx(elder_id: str, msg_id: str, medicines: list[dict]) -> None:  # type: ignore[type-arg]
+    _col(elder_id).document(msg_id).update({"rx": medicines})
 
 
 def get(elder_id: str, msg_id: str) -> FamilyMessage | None:

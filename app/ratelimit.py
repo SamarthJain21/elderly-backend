@@ -43,3 +43,4 @@ ask_calls = RateLimiter(30, 3600)  # "Ask about Mum" questions
 # Address search: one call per typed pause, plus the pick.
 places_calls = RateLimiter(60, 60)
 rx_scans = RateLimiter(20, 3600)  # prescription photos (vision calls)
+photo_posts = RateLimiter(30, 3600)  # photos in the family chat

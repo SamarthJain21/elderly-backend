@@ -30,6 +30,7 @@ def _fresh_rate_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ratelimit, "ask_calls", ratelimit.RateLimiter(30, 3600))
     monkeypatch.setattr(ratelimit, "places_calls", ratelimit.RateLimiter(60, 60))
     monkeypatch.setattr(ratelimit, "rx_scans", ratelimit.RateLimiter(20, 3600))
+    monkeypatch.setattr(ratelimit, "photo_posts", ratelimit.RateLimiter(30, 3600))
 
 
 @pytest.fixture(autouse=True)
