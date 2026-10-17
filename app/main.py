@@ -18,7 +18,7 @@ from app.routers import places_saved_api  # saved places for rides
 from app.routers import sandbox_api  # 'Try with real AI' (own line: keeps feature branches from colliding)
 from app import usage
 from app.config import get_settings
-from app.routers import alerts_api, approvals, insights_api, chat, checkins, elders, me, people, reminders, settings
+from app.routers import alerts_api, approvals, elder_access, insights_api, chat, checkins, elders, me, people, reminders, settings
 
 # Our own INFO logs (e.g. "turn timings …") go to stdout → Cloud Run logs. Uvicorn configures only its own loggers.
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -43,6 +43,7 @@ app.add_middleware(
 )
 
 app.include_router(me.router)
+app.include_router(elder_access.router)
 app.include_router(sandbox_api.router)
 app.include_router(elders.router)
 app.include_router(reminders.router)
