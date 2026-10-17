@@ -273,18 +273,25 @@ class Session:
         ctx = ToolContext(elder_id=self.elder_id, elder=elder, rules=rules, request_text=text, actor_uid=self.user.uid,
                           people=people, heard=" ".join([*said_before, text]), here=self.here())
 
+        asked_where: list[str] = []
+
         async def execute(name: str, args: dict[str, Any]) -> dict[str, Any]:
             if name == "answer_pending_confirmation" and pending is not None:
                 return await self.resolve(pending, bool(args.get("approve")), elder)
             # Say what's happening while the tool + the follow-up model call run ("Checking the weather…").
             await self.send({"type": "typing", "tool": name})
-            return await run_tool(ctx, name, args)
+            result = await run_tool(ctx, name, args)
+            if result.get("status") == "need_destination":
+                asked_where.extend(result.get("savedPlaces") or [])
+            return result
 
         reply = await asyncio.wait_for(
             self.model.run(prompt, turns, tool_declarations(pending is not None), execute), MODEL_TIMEOUT_S,
         )
         t.mark("model+tools")
         reply.quickReplies = clean_quick_replies(reply.quickReplies, elder.get("name", ""))
+        if asked_where:  # "Where to?": her saved places as the one-tap answers, whatever the model suggested
+            reply.quickReplies = asked_where[:3]
         await self._reply(reply, elder, ctx.touched[-1] if ctx.touched else None)
         t.mark("reply_sent")
         t.log(tool=ctx.touched[-1].tool if ctx.touched else None)
