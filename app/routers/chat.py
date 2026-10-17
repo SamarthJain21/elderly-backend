@@ -87,6 +87,8 @@ router = APIRouter()
 AUTH_TIMEOUT_S = 10
 MODEL_TIMEOUT_S = 45
 HISTORY_TURNS = 20
+HERE_FRESH_S = 600
+HERE_ACCURACY_M = 200
 _NON_LATIN = re.compile(r"[\u0900-\u097F\u0E00-\u0E7F\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]")  # Devanagari, Thai, CJK, Hangul
 HISTORY_ON_CONNECT = 50
 
@@ -120,9 +122,17 @@ def _writer(elder: dict, name: str) -> str:
     return name
 
 
+class Here(BaseModel):
+    """The phone's location, sent only with ride requests. Kept for this connection, never stored."""
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    accuracy: float = Field(ge=0, le=1_000_000)  # metres
+
+
 class TextFrame(BaseModel):
     type: Literal["message"]
     text: str = Field(min_length=1, max_length=1000)
+    here: Here | None = None
 
 
 class StartCheckInFrame(BaseModel):
@@ -167,6 +177,18 @@ class Session:
 
     def __init__(self, ws: WebSocket, user: AuthedUser, elder_id: str, model: ChatModel) -> None:
         self.ws, self.user, self.elder_id, self.model = ws, user, elder_id, model
+        self._here: tuple[Here, float] | None = None  # (location, when it arrived)
+
+    def set_here(self, here: Here | None) -> None:
+        if here is not None:
+            self._here = (here, time.monotonic())
+
+    def here(self) -> tuple[float, float] | None:
+        """A pickup point only if it's from the last 10 minutes and good to ~200 m — else we use home."""
+        if self._here is None:
+            return None
+        h, at = self._here
+        return (h.lat, h.lng) if time.monotonic() - at < HERE_FRESH_S and h.accuracy <= HERE_ACCURACY_M else None
 
     async def send(self, frame: dict[str, Any]) -> None:
         await self.ws.send_json(frame)
@@ -249,7 +271,7 @@ class Session:
         prompt = build_system_prompt(elder, today, now, pending.summary() if pending else None)
         said_before = [t.text for t in turns if t.role == "elder"][-3:]
         ctx = ToolContext(elder_id=self.elder_id, elder=elder, rules=rules, request_text=text, actor_uid=self.user.uid,
-                          people=people, heard=" ".join([*said_before, text]))
+                          people=people, heard=" ".join([*said_before, text]), here=self.here())
 
         async def execute(name: str, args: dict[str, Any]) -> dict[str, Any]:
             if name == "answer_pending_confirmation" and pending is not None:
@@ -547,6 +569,7 @@ async def chat(ws: WebSocket, elder_id: str, model: Annotated[ChatModel, Depends
                     await s.send({"type": "error", "message": "Caretakers can only send family messages here"})
                 elif kind == "message":
                     frame = TextFrame.model_validate(raw)
+                    s.set_here(frame.here)
                     await s.on_text(frame.text.strip())
                 elif kind == "start_checkin":
                     await s.start_checkin(StartCheckInFrame.model_validate(raw).mood)

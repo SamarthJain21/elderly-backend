@@ -92,3 +92,40 @@ def test_where_they_said_counts_in_any_language_and_from_just_before() -> None:
     assert executor._was_said("temple", "I want to go to the temple now")            # said a turn earlier, then "now"
     assert not executor._was_said("clinic", "taxi book kijiye")
     assert not executor._was_said("", "take me to the clinic")
+
+
+@pytest.mark.anyio
+async def test_a_ride_picks_her_up_where_she_is_now(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    async def gated(ctx: Any, name: str, args: dict[str, Any], quote: Any, **kw: Any) -> dict[str, Any]:
+        captured.update(args=args, url=kw.get("bookingUrl"), lines=quote.lines)
+        return {"status": "awaiting_elder_confirmation"}
+    monkeypatch.setattr(executor, "_gated", gated)
+    elder = {"name": "Rose", "timezone": "Asia/Kolkata", "places": [CLINIC],
+             "address": {"line1": "12 MG Road", "city": "Pune", "lat": 18.52, "lng": 73.87, "precision": "street"}}
+    out_shopping = (18.5100, 73.8500)
+    ctx = executor.ToolContext(elder_id="e1", elder=elder, rules=default_rules("INR"), request_text="take me to the clinic",
+                               actor_uid="e1", here=out_shopping)
+    await executor.run_tool(ctx, "book_ride", {"destination": "Clinic", "as_said": "clinic"})
+    assert "pickup%5Blatitude%5D=18.510000" in captured["url"] and "Current+location" in captured["url"]
+    assert captured["args"]["from"] == "current_location" and captured["lines"][-1] == "From where you are now"
+
+    ctx.here = None  # no location (or not shared): from home, as before
+    await executor.run_tool(ctx, "book_ride", {"destination": "Clinic", "as_said": "clinic"})
+    assert "pickup%5Blatitude%5D=18.520000" in captured["url"] and captured["lines"][-1] == "From home"
+
+
+def test_only_a_fresh_accurate_location_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.routers import chat
+    s = chat.Session.__new__(chat.Session)
+    s._here = None
+    assert s.here() is None
+    clock = [1000.0]
+    monkeypatch.setattr(chat.time, "monotonic", lambda: clock[0])
+    s.set_here(chat.Here(lat=18.51, lng=73.85, accuracy=30))
+    assert s.here() == (18.51, 73.85)
+    clock[0] += chat.HERE_FRESH_S + 1
+    assert s.here() is None                                      # 10 minutes old: use home
+    s.set_here(chat.Here(lat=18.51, lng=73.85, accuracy=1500))   # a rough fix (wifi/cell): use home
+    assert s.here() is None

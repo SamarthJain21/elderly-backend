@@ -82,7 +82,7 @@ def quote_medicine(medicine: str, quantity: int, currency: Currency) -> Quote:
 _FARE: dict[Currency, tuple[int, int]] = {"INR": (5_000, 1_800), "THB": (3_500, 800), "SGD": (400, 80)}
 
 
-def quote_ride(destination: str, km: float | None, currency: Currency) -> Quote:
+def quote_ride(destination: str, km: float | None, currency: Currency, from_here: bool | None = None) -> Quote:
     """Estimate only — the real fare is set by the ride app when the booking is finished there."""
     if km is None:
         h = int(hashlib.sha256(destination.lower().encode()).hexdigest(), 16)
@@ -90,7 +90,10 @@ def quote_ride(destination: str, km: float | None, currency: Currency) -> Quote:
     road_km = km * 1.3
     base, per_km = _FARE[currency]
     fare = base + round(per_km * road_km)
-    return Quote(provider=RIDES[currency], lines=[f"Ride to {destination} (~{road_km:.0f} km)"],
+    lines = [f"Ride to {destination} (~{road_km:.0f} km)"]
+    if from_here is not None:  # where the car comes to (the elder app says it in their language)
+        lines.append("From where you are now" if from_here else "From home")
+    return Quote(provider=RIDES[currency], lines=lines,
                  amountMinor=round(fare / 100) * 100, currency=currency, eta=f"~{max(5, round(road_km * 3))} min drive",
                  estimate=True, demo=False)
 

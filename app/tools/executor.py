@@ -111,6 +111,7 @@ class ToolContext:
     request_text: str
     actor_uid: str
     heard: str = ""  # what they said this turn and just before — rides must go where they actually said
+    here: tuple[float, float] | None = None  # their phone's location, sent with a ride request (fresh + accurate only)
     people: list[Contact] = field(default_factory=list)
     # Filled in as tools run so the session can attach a card to the agent's reply.
     touched: list[Action] = field(default_factory=list)
@@ -317,13 +318,18 @@ async def run_tool(ctx: ToolContext, name: str, args: dict[str, Any]) -> dict[st
         if place is None:
             return {"status": "place_not_found",
                     "instruction": f"Say you couldn't find '{dest}'. Ask for the full name or address of the place."}
-        km = km_between(home, (place.lat, place.lng)) if home else None
+        # Pick up where they are now if their phone told us (out at the market, at a friend's), else from home.
+        start, start_label = (ctx.here, "Current location") if ctx.here else (pickup, "Home")
+        origin = ctx.here or home
+        km = km_between(origin, (place.lat, place.lng)) if origin else None
         if currency == "INR":
-            url = uber_link(pickup, "Home", place, dest)  # pickup None → Uber uses their current location
+            url = uber_link(start, start_label, place, dest)  # start None → Uber uses their current location
         else:
-            url = maps_link(pickup, place)
-        return await _gated(ctx, name, {"destination": dest, "when": args.get("when", "now")},
-                            providers.quote_ride(dest, km, currency), bookingUrl=url)
+            url = maps_link(start, place)
+        from_here = True if ctx.here else (False if pickup else None)
+        return await _gated(ctx, name, {"destination": dest, "when": args.get("when", "now"),
+                                        "from": "current_location" if ctx.here else "home"},
+                            providers.quote_ride(dest, km, currency, from_here), bookingUrl=url)
     if name == "set_reminder":
         time_s = str(args.get("time", ""))
         if len(time_s) != 5 or time_s[2] != ":":
