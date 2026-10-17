@@ -83,7 +83,7 @@ _FARE: dict[Currency, tuple[int, int]] = {"INR": (5_000, 1_800), "THB": (3_500, 
 
 
 def quote_ride(destination: str, km: float | None, currency: Currency, from_here: bool | None = None) -> Quote:
-    """Estimate only — the real fare is set by the ride app when the booking is finished there."""
+    """A simulated in-app booking (like food and medicine) until a ride partner API is connected; fare is an estimate."""
     if km is None:
         h = int(hashlib.sha256(destination.lower().encode()).hexdigest(), 16)
         km = 3 + (h % 120) / 10  # unknown distance: deterministic 3–15 km
@@ -95,7 +95,7 @@ def quote_ride(destination: str, km: float | None, currency: Currency, from_here
         lines.append("From where you are now" if from_here else "From home")
     return Quote(provider=RIDES[currency], lines=lines,
                  amountMinor=round(fare / 100) * 100, currency=currency, eta=f"~{max(5, round(road_km * 3))} min drive",
-                 estimate=True, demo=False)
+                 estimate=True, demo=True)
 
 
 def place(quote: Quote) -> str:

@@ -27,7 +27,7 @@ from app.agent.family import FamilyMessage
 from app.tools import actions, providers
 from app.tools.actions import Action
 from app.routers import places_saved_api
-from app.tools.geo import Place, geocode, km_between, maps_link, uber_link
+from app.tools.geo import Place, geocode, km_between
 from app.tools.weather import get_weather
 
 log = logging.getLogger(__name__)
@@ -143,16 +143,6 @@ def _next_occurrence(time_hhmm: str, tz: str) -> dt.date:
 async def perform(a: Action, elder: dict[str, Any]) -> dict[str, Any]:
     """Carry out an approved action. Marks it done (or failed) and returns facts for the model."""
     try:
-        if a.tool == "book_ride" and a.bookingUrl:
-            # Real handoff: a prefilled ride-app link. The elder (or family) taps it to finish booking.
-            a.status = "handed_off"
-            await _save(a)
-            await asyncio.to_thread(checkin_store.add_log, a.elderId, LogEntry(
-                message=f"Ride ready to book — {a.summary()} (estimate). Link sent to {elder.get('name', 'them')}.", kind="ok"))
-            return {"status": "ready_to_book", "estimatedFare": format_money(a.quote.amountMinor, a.quote.currency) if a.quote else None,
-                    "instruction": "Tell them to tap the button on the card to open the app and confirm the ride there. "
-                                   "The fare shown is an estimate.",
-                    "say": "Tap the button on the card to finish booking your ride."}
         if a.quote is not None:
             a.orderId = providers.place(a.quote)
             result = {"status": "done", "orderId": a.orderId, "provider": a.quote.provider,
@@ -182,6 +172,11 @@ async def perform(a: Action, elder: dict[str, Any]) -> dict[str, Any]:
         demo = " (demo — not really ordered)" if a.quote and a.quote.demo else ""
         await asyncio.to_thread(checkin_store.add_log, a.elderId, LogEntry(message=f"Done — {a.summary()}{demo}", kind="ok"))
         result["say"] = f"Done — {a.summary()}."
+        if a.tool == "book_ride":
+            start = "from where you are now" if a.args.get("from") == "current_location" else "from home"
+            result["say"] = f"Your cab is booked {start} to {a.args.get('destination', 'there')}. It will reach you in {a.quote.eta.lstrip('~') if a.quote else 'a few minutes'}."
+            result["instruction"] = ("Tell them warmly the cab is booked " + start + " and roughly when it arrives. "
+                                     "Don't mention any app or link: nothing else for them to do.")
     else:
         result["say"] = "Sorry, that didn't work. Your family can help."
     return result
@@ -319,17 +314,13 @@ async def run_tool(ctx: ToolContext, name: str, args: dict[str, Any]) -> dict[st
             return {"status": "place_not_found",
                     "instruction": f"Say you couldn't find '{dest}'. Ask for the full name or address of the place."}
         # Pick up where they are now if their phone told us (out at the market, at a friend's), else from home.
-        start, start_label = (ctx.here, "Current location") if ctx.here else (pickup, "Home")
+        # Booked inside the app — the elder is never sent to another app (a ride partner API plugs in here).
         origin = ctx.here or home
         km = km_between(origin, (place.lat, place.lng)) if origin else None
-        if currency == "INR":
-            url = uber_link(start, start_label, place, dest)  # start None → Uber uses their current location
-        else:
-            url = maps_link(start, place)
         from_here = True if ctx.here else (False if pickup else None)
         return await _gated(ctx, name, {"destination": dest, "when": args.get("when", "now"),
                                         "from": "current_location" if ctx.here else "home"},
-                            providers.quote_ride(dest, km, currency, from_here), bookingUrl=url)
+                            providers.quote_ride(dest, km, currency, from_here))
     if name == "set_reminder":
         time_s = str(args.get("time", ""))
         if len(time_s) != 5 or time_s[2] != ":":

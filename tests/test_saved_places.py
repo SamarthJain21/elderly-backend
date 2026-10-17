@@ -31,15 +31,15 @@ async def test_a_ride_to_a_saved_place_goes_to_its_exact_spot(monkeypatch: pytes
     captured: dict[str, Any] = {}
 
     async def gated(ctx: Any, name: str, args: dict[str, Any], quote: Any, **kw: Any) -> dict[str, Any]:
-        captured.update(args=args, url=kw.get("bookingUrl"))
+        captured.update(args=args, url=kw.get("bookingUrl"), lines=quote.lines)
         return {"status": "awaiting_elder_confirmation"}
     monkeypatch.setattr(executor, "_gated", gated)
     elder = {"name": "Rose", "timezone": "Asia/Kolkata", "places": [CLINIC],
              "address": {"line1": "12 MG Road", "city": "Pune", "lat": 18.52, "lng": 73.87}}
     ctx = executor.ToolContext(elder_id="e1", elder=elder, rules=default_rules("INR"), request_text="take me to the clinic", actor_uid="e1")
     await executor.run_tool(ctx, "book_ride", {"destination": "the clinic"})
-    assert captured["args"]["destination"] == "Clinic"
-    assert "18.531200" in captured["url"] and "73.877000" in captured["url"]   # dropoff = the saved place
+    assert captured["args"]["destination"] == "Clinic" and captured["url"] is None   # booked in the app, no link
+    assert captured["lines"][0] == "Ride to Clinic (~2 km)"   # distance to the saved place's exact spot
 
 
 def test_the_helper_knows_the_saved_places() -> None:
@@ -108,12 +108,12 @@ async def test_a_ride_picks_her_up_where_she_is_now(monkeypatch: pytest.MonkeyPa
     ctx = executor.ToolContext(elder_id="e1", elder=elder, rules=default_rules("INR"), request_text="take me to the clinic",
                                actor_uid="e1", here=out_shopping)
     await executor.run_tool(ctx, "book_ride", {"destination": "Clinic", "as_said": "clinic"})
-    assert "pickup%5Blatitude%5D=18.510000" in captured["url"] and "Current+location" in captured["url"]
-    assert captured["args"]["from"] == "current_location" and captured["lines"][-1] == "From where you are now"
+    assert captured["url"] is None and captured["args"]["from"] == "current_location"
+    assert captured["lines"] == ["Ride to Clinic (~5 km)", "From where you are now"]   # measured from where she is (home is ~2 km)
 
     ctx.here = None  # no location (or not shared): from home, as before
     await executor.run_tool(ctx, "book_ride", {"destination": "Clinic", "as_said": "clinic"})
-    assert "pickup%5Blatitude%5D=18.520000" in captured["url"] and captured["lines"][-1] == "From home"
+    assert captured["args"]["from"] == "home" and captured["lines"] == ["Ride to Clinic (~2 km)", "From home"]
 
 
 def test_only_a_fresh_accurate_location_is_used(monkeypatch: pytest.MonkeyPatch) -> None:

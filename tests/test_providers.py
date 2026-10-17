@@ -25,7 +25,7 @@ def test_quantities_are_capped() -> None:
 def test_ride_fare_grows_with_distance_and_is_an_estimate() -> None:
     near, far = quote_ride("Clinic", 2, "INR"), quote_ride("Airport", 20, "INR")
     assert near.amountMinor < far.amountMinor
-    assert near.estimate and not near.demo
+    assert near.estimate and near.demo  # booked inside the app (simulated) until a ride partner is connected
     assert quote_ride("x", None, "INR").amountMinor == quote_ride("X", None, "INR").amountMinor  # deterministic
 
 

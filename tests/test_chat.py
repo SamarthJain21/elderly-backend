@@ -515,7 +515,7 @@ def test_emergency_always_alerts_even_if_everything_blocked(store: Store) -> Non
 
 
 
-def test_ride_is_handed_off_with_a_prefilled_uber_link(store: Store) -> None:
+def test_ride_is_booked_inside_the_app_never_sent_to_another_app(store: Store) -> None:
     d = store.rules.model_dump()
     d["tools"]["book_ride"] = {"mode": "autonomous", "limitMinor": 100_000}
     store.rules = type(store.rules).model_validate(d)
@@ -528,11 +528,8 @@ def test_ride_is_handed_off_with_a_prefilled_uber_link(store: Store) -> None:
             card = _agent_reply(ws)["action"]
     finally:
         app.dependency_overrides.clear()
-    assert m.tool_results[0]["status"] == "ready_to_book"
-    assert card["status"] == "handed_off" and card["estimate"] and not card["demo"]
-    assert card["bookingUrl"].startswith("https://m.uber.com/ul/?action=setPickup")
-    assert "pickup%5Blatitude%5D=18.520000" in card["bookingUrl"]
-    assert card["bookingLabel"] == "Open Uber to book"
+    assert m.tool_results[0]["status"] == "done" and "cab is booked from home" in m.tool_results[0]["say"]
+    assert card["status"] == "done" and card["bookingUrl"] is None and card["estimate"]
 
 
 def test_unknown_place_asks_instead_of_booking(store: Store) -> None:
@@ -587,10 +584,10 @@ def test_city_level_address_is_not_used_as_pickup(store: Store, monkeypatch: pyt
         with TestClient(app).websocket_connect("/ws/e1") as ws:
             _connect(ws)
             ws.send_json({"type": "message", "text": "taxi to the clinic"})
-            url = _agent_reply(ws)["action"]["bookingUrl"]
+            card = _agent_reply(ws)["action"]
     finally:
         app.dependency_overrides.clear()
-    assert "pickup=my_location" in url and "pickup%5Blatitude%5D" not in url
+    assert not any(line.startswith("From ") for line in card["lines"])  # only the city is known: no pickup claimed
 
 
 
@@ -897,3 +894,18 @@ def test_family_chips_are_in_english_even_for_a_hindi_speaking_elder(two_sockets
         elder.receive_json()
     assert [ch["label"] for ch in m["chips"]] == ["💬 Glad you went out!"]
     assert "LANGUAGE: these labels are for the family member" in seen[-1]
+
+
+def test_where_to_offers_her_saved_places_as_the_buttons(store: Store, monkeypatch: pytest.MonkeyPatch) -> None:
+    place = lambda n: {"id": n, "name": n, "address": {"line1": n, "city": "Pune", "lat": 18.5, "lng": 73.8, "precision": "address"}}  # noqa: E731
+    monkeypatch.setitem(ELDER_DOC, "places", [place("Clinic"), place("Temple"), place("Priya's home"), place("Market")])
+    _with_model(FakeModel(tool_calls=[("book_ride", {"destination": "Clinic", "as_said": ""})]))
+    try:
+        with TestClient(app).websocket_connect("/ws/e1") as ws:
+            _connect(ws)
+            ws.send_json({"type": "message", "text": "book a cab"})
+            reply = _agent_reply(ws)
+    finally:
+        app.dependency_overrides.clear()
+    assert reply["action"] is None                                    # nothing booked: she hasn't said where
+    assert reply["quickReplies"] == ["Clinic", "Temple", "Priya's home"]   # not the model's "Yes / No / Later"
