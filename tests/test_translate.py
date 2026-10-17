@@ -37,3 +37,21 @@ def test_writer_relationship_comes_from_the_elders_contacts():
     assert _writer(elder, "Ravi") == "Ravi"            # no relationship → name only, gender not guessed
     assert _writer(elder, "Family") == "Family"
     assert _writer({}, "") == ""
+
+
+def test_a_reply_is_translated_knowing_what_it_answers(store: Store, model: FakeModel, monkeypatch: Any) -> None:  # noqa: F811
+    """'खाना खा लिया' alone reads as 'Have you eaten?'; after 'Did you eat lunch?' it's 'I've eaten'."""
+    from app.agent import family
+    asked = family.FamilyMessage(sender="caretaker", senderUid="c1", senderName="Priya", text="Did you eat lunch, Mum?")
+    monkeypatch.setattr(family, "recent", lambda eid, n: [asked])
+    calls: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(translate, "translate", lambda *a: calls.append(a) or "I've eaten")
+    with TestClient(app).websocket_connect("/ws/e1") as ws:
+        _connect(ws)
+        ws.send_json({"type": "family_reply", "text": "खाना खा लिया"})
+        f: dict[str, Any] = ws.receive_json()
+        while f["type"] != "family_message":
+            f = ws.receive_json()
+    text, target, source, writer, context = calls[0]
+    assert (text, target, context) == ("खाना खा लिया", "en-US", "Did you eat lunch, Mum?")
+    assert "older family member" in writer and f["message"]["translated"] == "I've eaten"

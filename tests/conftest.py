@@ -49,4 +49,4 @@ def _no_push(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
 def _no_translate(monkeypatch: pytest.MonkeyPatch) -> None:
     """Family-chat translation calls Gemini; tests get a marker instead (tests/test_translate.py covers it)."""
     from app.agent import translate
-    monkeypatch.setattr(translate, "translate", lambda text, target, source=None, writer=None: f"[{target}] {text}" if translate.needs_translation(text, target, source) else None)
+    monkeypatch.setattr(translate, "translate", lambda text, target, source=None, writer=None, context=None: f"[{target}] {text}" if translate.needs_translation(text, target, source) else None)

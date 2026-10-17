@@ -101,9 +101,9 @@ def frame_error(kind: str | None, raw: object, exc: ValidationError) -> str:
     return "Sorry, that didn't go through. Please try again."
 
 
-def _safe_translate(text: str, target: str, source: str | None, writer: str | None) -> str | None:
+def _safe_translate(text: str, target: str, source: str | None, writer: str | None, context: str | None = None) -> str | None:
     try:
-        return translate.translate(text, target, source, writer)
+        return translate.translate(text, target, source, writer, context)
     except Exception:  # noqa: BLE001 — the original is always shown
         log.warning("family translation failed", exc_info=True)
         return None
@@ -410,8 +410,11 @@ class Session:
         elder_lang = elder.get("language", "en-US")
         target, source = ("en-US", elder_lang) if to_caretaker else (elder_lang, None)  # family may write any language
         name = await asyncio.to_thread(family.caretaker_name, self.user.uid) if not to_caretaker else ""
-        writer = _writer(elder, name) if not to_caretaker else None
-        tr = asyncio.create_task(asyncio.to_thread(_safe_translate, text, target, source, writer))
+        writer = _writer(elder, name) if not to_caretaker else f"{(elder.get('name') or 'the elder').split()[0]} (the older family member)"
+        # What this answers — the other side's last message — so a short reply isn't read as a question.
+        other = "caretaker" if to_caretaker else "elder"
+        last = next((m for m in reversed(await asyncio.to_thread(family.recent, self.elder_id, 6)) if m.sender == other), None)
+        tr = asyncio.create_task(asyncio.to_thread(_safe_translate, text, target, source, writer, last.text if last else None))
         if self.user.role == "caretaker":
             msg = FamilyMessage(sender="caretaker", senderUid=self.user.uid, senderName=name, text=text,
                                 chips=await self._make_chips(elder, True, name, text))
