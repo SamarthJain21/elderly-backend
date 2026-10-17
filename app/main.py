@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import elder_access  # setup links + phone/PIN sign-in for elders
 from app.routers import voice_api  # natural read-aloud voice
+from app.routers import stt_api  # speech-to-text for browsers without it (Brave, Firefox)
 from app.routers import places_api  # address search
 from app.routers import medicines_api  # medicine-name check
 from app.routers import device_api  # the elder app's settings, managed by family too
@@ -51,6 +52,7 @@ app.include_router(elders.router)
 app.include_router(reminders.router)
 app.include_router(chat.router)
 app.include_router(voice_api.router)
+app.include_router(stt_api.router)
 app.include_router(places_api.router)
 app.include_router(medicines_api.router)
 app.include_router(device_api.router)
