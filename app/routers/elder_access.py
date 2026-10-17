@@ -59,9 +59,7 @@ def pin_status(elder_id: str, user: CurrentUser) -> PinStatus:
 
 @router.put("/elders/{elder_id}/pin")
 def set_pin(elder_id: str, body: PinSet, user: CurrentUser) -> PinStatus:
-    elder = load_elder(user, elder_id)  # the elder themself, or their family
-    if user.sandbox:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not available in the sandbox")
+    elder = load_elder(user, elder_id)  # the elder themself, or their family (sandbox too: judges can try it)
     ratelimit.account_writes.check(user.uid)
     elder_pin.set_pin(elder_id, elder["phone"], body.pin)
     return PinStatus(set=True)
