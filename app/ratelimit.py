@@ -36,6 +36,7 @@ account_writes = RateLimiter(10, 3600)
 # 'Try with real AI' sandboxes (no sign-in): per visitor IP, and a daily cap on the whole thing.
 sandbox_per_ip = RateLimiter(20, 3600)  # judges press "Start over"; offices share one IP
 sandbox_global = RateLimiter(300, 86400)
+pin_logins = RateLimiter(30, 3600)  # per IP, on top of the per-account lock
 # Read-aloud clips: one per reply/message, plus replays.
 tts_calls = RateLimiter(60, 60)
 ask_calls = RateLimiter(30, 3600)  # "Ask about Mum" questions

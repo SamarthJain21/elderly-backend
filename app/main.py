@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.routers import elder_access  # setup links + phone/PIN sign-in for elders
 from app.routers import voice_api  # natural read-aloud voice
 from app.routers import places_api  # address search
 from app.routers import medicines_api  # medicine-name check
@@ -44,6 +45,7 @@ app.add_middleware(
 )
 
 app.include_router(me.router)
+app.include_router(elder_access.router)
 app.include_router(sandbox_api.router)
 app.include_router(elders.router)
 app.include_router(reminders.router)

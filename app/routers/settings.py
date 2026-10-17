@@ -8,7 +8,7 @@ from typing import Any, Literal
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from app import firebase
+from app import elder_pin, firebase
 from app.agent import live
 from app.access import load_elder
 from app.auth import CurrentUser
@@ -138,4 +138,6 @@ def put_profile(elder_id: str, body: ProfileUpdate, user: CurrentUser) -> Profil
     # users/{uid} mirrors name + language (used for login display and agent language).
     batch.update(db.collection("users").document(elder_id), {"displayName": body.name, "language": body.language})
     batch.commit()
+    if body.phone != elder.get("phone"):
+        elder_pin.update_phone(elder_id, body.phone)  # the sign-in PIN follows the new number
     return body
