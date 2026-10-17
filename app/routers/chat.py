@@ -87,6 +87,7 @@ router = APIRouter()
 AUTH_TIMEOUT_S = 10
 MODEL_TIMEOUT_S = 45
 HISTORY_TURNS = 20
+_NON_LATIN = re.compile(r"[\u0900-\u097F\u0E00-\u0E7F\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]")  # Devanagari, Thai, CJK, Hangul
 HISTORY_ON_CONNECT = 50
 
 
@@ -100,9 +101,6 @@ def frame_error(kind: str | None, raw: object, exc: ValidationError) -> str:
         if len(text) > 1000:
             return "That message is too long — please keep it under 1000 characters."
     return "Sorry, that didn't go through. Please try again."
-
-
-_NON_LATIN = re.compile(r"[\u0900-\u097F\u0E00-\u0E7F\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]")  # Devanagari, Thai, CJK, Hangul
 
 
 class TextFrame(BaseModel):
