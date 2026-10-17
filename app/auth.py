@@ -25,6 +25,7 @@ class AuthedUser:
     role: Role | None
     sandbox: bool = False  # a 'Try with real AI' account (app/sandbox.py)
     picture: str | None = None  # Google profile photo (family members)
+    tour_done: bool = False  # finished the app tour once, on any device
 
 
 def authenticate(token: str) -> AuthedUser:
@@ -51,7 +52,8 @@ def authenticate(token: str) -> AuthedUser:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Caretakers must sign in with Google")
 
     return AuthedUser(uid=uid, email=claims.get("email"), provider=provider, role=role, sandbox=sandbox,
-                      picture=claims.get("picture") if provider == "google.com" else None)
+                      picture=claims.get("picture") if provider == "google.com" else None,
+                      tour_done=bool(doc and doc.get("tourDoneAt")))
 
 
 def get_authed_user(
