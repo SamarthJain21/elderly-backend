@@ -100,3 +100,38 @@ def test_tour_is_remembered_for_the_account_not_the_browser(client: TestClient, 
 
 def test_tour_done_needs_an_onboarded_account(client: TestClient) -> None:
     assert client.post("/me/tour-done", headers=h("new-google")).status_code == 404
+
+
+def test_signing_up_skips_an_invite_to_an_elder_that_no_longer_exists(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    writes: list[tuple[str, Any]] = []
+
+    class Ref:
+        def __init__(self, path: str) -> None:
+            self.path, self.id = path, path.split("/")[-1]
+
+        def get(self) -> Any:
+            data = {"elderIds": ["gone", "alive"]} if self.path == "invites/n@x.com" else None
+            return type("Snap", (), {"to_dict": lambda _s: data, "exists": data is not None})()
+
+    class Batch:
+        def set(self, ref: Ref, d: Any) -> None: writes.append(("set", ref.path, d))  # noqa: E704
+        def update(self, ref: Ref, d: Any) -> None: writes.append(("update", ref.path))  # noqa: E704
+        def delete(self, ref: Ref) -> None: writes.append(("delete", ref.path))  # noqa: E704
+        def commit(self) -> None: pass  # noqa: E704
+
+    class DB:
+        def collection(self, name: str) -> Any:
+            return type("C", (), {"document": lambda _s, i: Ref(f"{name}/{i}")})()
+
+        def batch(self) -> Batch:
+            return Batch()
+
+        def get_all(self, refs: list[Ref]) -> list[Any]:
+            return [type("S", (), {"id": r.id, "exists": r.id == "alive"})() for r in refs]
+
+    monkeypatch.setattr(firebase, "get_db", lambda: DB())
+    r = client.post("/onboarding/caretaker", json={"name": "Nok"}, headers=h("new-google"))
+    assert r.status_code == 201
+    assert ("update", "elders/alive") in writes and ("update", "elders/gone") not in writes
+    caretaker = next(w for w in writes if w[0] == "set" and w[1] == "caretakers/n1")
+    assert caretaker[2]["elderIds"] == ["alive"]

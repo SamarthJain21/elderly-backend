@@ -5,6 +5,7 @@ import logging
 from collections.abc import Sequence
 
 from firebase_admin import auth as fb_auth
+from google.cloud.firestore import ArrayRemove
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app import firebase
@@ -31,6 +32,13 @@ def erase_elder(elder_id: str, *, also_caretakers: Sequence[str] = ()) -> None:
             snap.reference.delete()
     db.collection("rules").document(elder_id).delete()
     db.collection("elder_pins").document(elder_id).delete()  # sign-in PIN hash (app/elder_pin.py)
+    # Pending family invites to this elder (invites/{email}.elderIds): an invite to a deleted elder broke sign-up.
+    for snap in db.collection("invites").where(filter=FieldFilter("elderIds", "array_contains", elder_id)).stream():
+        left = [i for i in (snap.to_dict() or {}).get("elderIds", []) if i != elder_id]
+        if left:
+            snap.reference.update({"elderIds": ArrayRemove([elder_id])})
+        else:
+            snap.reference.delete()
     db.recursive_delete(db.collection("elders").document(elder_id))
     db.collection("users").document(elder_id).delete()
     _delete_auth_user(elder_id)
