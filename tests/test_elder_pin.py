@@ -48,8 +48,8 @@ class Col:
         return Ref(self.store, id_)
 
     def where(self, filter: Any) -> Any:  # noqa: A002 — Firestore's own keyword
-        want = filter.value
-        return type("Q", (), {"stream": lambda _self: [Snap(Ref(self.store, k)) for k, v in self.store.items() if v["phoneKey"] == want]})()
+        want = filter.value if isinstance(filter.value, list) else [filter.value]
+        return type("Q", (), {"stream": lambda _self: [Snap(Ref(self.store, k)) for k, v in self.store.items() if v["phoneKey"] in want]})()
 
 
 @pytest.fixture
@@ -129,3 +129,8 @@ def test_new_setup_link_is_family_only_and_can_sign_out_other_phones(client: dic
     assert r.status_code == 200
     assert r.json()["tempPassword"] == client["updated"][0] and r.json()["email"] == "elder-x@elderly.app"
     assert client["revoked"] == ["e1"]
+
+
+def test_a_number_saved_without_country_code_still_signs_in_with_it(pins: Col) -> None:
+    elder_pin.set_pin("varuna", "9592812463", "4826")              # stored before the + rule
+    assert elder_pin.check("+91 95928 12463", "4826") == "varuna"

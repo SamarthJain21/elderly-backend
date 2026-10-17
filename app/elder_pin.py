@@ -38,6 +38,16 @@ def phone_key(phone: str) -> str:
     return "".join(ch for ch in phone if ch.isdigit())
 
 
+def _lookup_keys(phone: str) -> list[str]:
+    """The typed number, and the same without its country code: an elder whose number was saved before the
+    country code was required ('9592812463') still signs in by typing +91 95928 12463."""
+    v = " ".join(phone.split())
+    keys = [phone_key(v)]
+    if v.startswith("+") and " " in v:
+        keys.append(phone_key(v.split(" ", 1)[1]))
+    return [k for k in dict.fromkeys(keys) if k]
+
+
 def _hash(pin: str, salt: bytes) -> bytes:
     return hashlib.scrypt(pin.encode(), salt=salt, n=2**14, r=8, p=1, dklen=32)
 
@@ -74,7 +84,7 @@ def check(phone: str, pin: str, now: dt.datetime | None = None) -> str | None:
     One phone can belong to two people (a couple sharing a phone), each with their own PIN.
     """
     now = now or dt.datetime.now(dt.UTC)
-    docs = list(_col().where(filter=FieldFilter("phoneKey", "==", phone_key(phone))).stream())
+    docs = list(_col().where(filter=FieldFilter("phoneKey", "in", _lookup_keys(phone))).stream())
     locked: list[dt.datetime] = []
     for d in docs:
         data: dict[str, Any] = d.to_dict() or {}
