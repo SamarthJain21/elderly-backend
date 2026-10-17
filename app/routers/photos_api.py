@@ -17,12 +17,19 @@ from pydantic import BaseModel, Field
 from app import push, ratelimit, rx_scan
 from app.access import load_elder
 from app.agent import family, live, photos
+from app.agent.chips import Chip
 from app.agent.family import FamilyMessage
 from app.agent.translate import language_name
 from app.auth import CurrentUser
 from app.schedule import Meals
 
 router = APIRouter(tags=["family"])
+
+# One-tap answers for the elder to a family photo (so it shows on their home screen with big buttons).
+_PHOTO_REPLIES = {
+    "en-US": ("❤️ Lovely!", "🙏 Thank you"), "hi-IN": ("❤️ बहुत सुंदर!", "🙏 धन्यवाद"),
+    "hi-Latn": ("❤️ Bahut sundar!", "🙏 Dhanyavaad"), "th-TH": ("❤️ น่ารักมาก!", "🙏 ขอบคุณนะ"),
+}
 log = logging.getLogger(__name__)
 
 
@@ -55,8 +62,9 @@ async def send_photo(elder_id: str, body: PhotoPost, user: CurrentUser) -> Famil
         read = photos.PhotoRead(caption="")
 
     name = elder.get("name", "") if from_elder else await asyncio.to_thread(family.caretaker_name, user.uid)
+    replies = [] if from_elder else [Chip(label=x) for x in _PHOTO_REPLIES.get(reader_lang, _PHOTO_REPLIES["en-US"])]
     msg = FamilyMessage(sender="elder" if from_elder else "caretaker", senderUid=user.uid, senderName=name,
-                        text=body.text.strip() or "📷", photoId=photo_id, photoAlt=read.caption or None)
+                        text=body.text.strip() or "📷", photoId=photo_id, photoAlt=read.caption or None, chips=replies)
     await asyncio.to_thread(family.save, elder_id, msg)
     await live.broadcast(elder_id, {"type": "family_message", "message": msg.model_dump(mode="json")}, "family")
     if from_elder:

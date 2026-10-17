@@ -67,6 +67,7 @@ def test_familys_photo_is_described_in_mums_language_and_not_read_for_medicines(
     assert m["sender"] == "caretaker" and m["senderName"] == "Priya" and m["text"] == "Rahul's first day!"
     assert env["described_in"] == ["Hindi (Devanagari script)"] and m["photoAlt"].startswith("राहुल")
     assert len(env["frames"]) == 1 and not env["rx"] and not env["push"]
+    assert [c["label"] for c in m["chips"]] == ["❤️ बहुत सुंदर!", "🙏 धन्यवाद"]   # big reply buttons, in her language
 
 
 def test_bad_uploads_are_refused(env: dict[str, Any]) -> None:
