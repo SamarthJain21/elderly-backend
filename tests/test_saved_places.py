@@ -36,7 +36,7 @@ async def test_a_ride_to_a_saved_place_goes_to_its_exact_spot(monkeypatch: pytes
     monkeypatch.setattr(executor, "_gated", gated)
     elder = {"name": "Rose", "timezone": "Asia/Kolkata", "places": [CLINIC],
              "address": {"line1": "12 MG Road", "city": "Pune", "lat": 18.52, "lng": 73.87}}
-    ctx = executor.ToolContext(elder_id="e1", elder=elder, rules=default_rules("INR"), request_text="", actor_uid="e1")
+    ctx = executor.ToolContext(elder_id="e1", elder=elder, rules=default_rules("INR"), request_text="take me to the clinic", actor_uid="e1")
     await executor.run_tool(ctx, "book_ride", {"destination": "the clinic"})
     assert captured["args"]["destination"] == "Clinic"
     assert "18.531200" in captured["url"] and "73.877000" in captured["url"]   # dropoff = the saved place
@@ -68,3 +68,64 @@ async def test_a_reported_scam_warns_the_family_and_tells_the_helper_what_to_say
     assert r["status"] == "family_warned" and "do NOT share" in r["instruction"]
     assert logs[0][0] == "alert" and "Possible scam" in logs[0][1]
     assert frames[0]["type"] == "notice" and sent[0][0].startswith("⚠️ Possible scam")
+
+
+@pytest.mark.anyio
+async def test_a_taxi_without_a_destination_asks_where_offering_saved_places(monkeypatch: pytest.MonkeyPatch) -> None:
+    """'Taxi book kijiye' said nothing about where: the model guessed the clinic. Now it has to ask."""
+    async def no_booking(*_: Any, **__: Any) -> None:
+        pytest.fail("must not quote a ride nobody asked for")
+    monkeypatch.setattr(executor, "_gated", no_booking)
+    elder = {"name": "Kamla", "timezone": "Asia/Kolkata", "places": [CLINIC, TEMPLE],
+             "address": {"line1": "B-14", "city": "New Delhi", "lat": 28.56, "lng": 77.24}}
+    ctx = executor.ToolContext(elder_id="e1", elder=elder, rules=default_rules("INR"), request_text="taxi book kijiye",
+                               actor_uid="e1", heard="taxi book kijiye")
+    out = await executor.run_tool(ctx, "book_ride", {"destination": "Clinic", "as_said": ""})
+    assert out["status"] == "need_destination" and out["savedPlaces"] == ["Clinic", "Priya's home"]
+    out = await executor.run_tool(ctx, "book_ride", {"destination": "Clinic", "as_said": "clinic"})  # made up
+    assert out["status"] == "need_destination"
+
+
+def test_where_they_said_counts_in_any_language_and_from_just_before() -> None:
+    assert executor._was_said("मंदिर", "मुझे मंदिर जाने के लिए टैक्सी चाहिए")
+    assert executor._was_said("Ruby Hall Clinic", "take me to ruby hall please")
+    assert executor._was_said("temple", "I want to go to the temple now")            # said a turn earlier, then "now"
+    assert not executor._was_said("clinic", "taxi book kijiye")
+    assert not executor._was_said("", "take me to the clinic")
+
+
+@pytest.mark.anyio
+async def test_a_ride_picks_her_up_where_she_is_now(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    async def gated(ctx: Any, name: str, args: dict[str, Any], quote: Any, **kw: Any) -> dict[str, Any]:
+        captured.update(args=args, url=kw.get("bookingUrl"), lines=quote.lines)
+        return {"status": "awaiting_elder_confirmation"}
+    monkeypatch.setattr(executor, "_gated", gated)
+    elder = {"name": "Rose", "timezone": "Asia/Kolkata", "places": [CLINIC],
+             "address": {"line1": "12 MG Road", "city": "Pune", "lat": 18.52, "lng": 73.87, "precision": "street"}}
+    out_shopping = (18.5100, 73.8500)
+    ctx = executor.ToolContext(elder_id="e1", elder=elder, rules=default_rules("INR"), request_text="take me to the clinic",
+                               actor_uid="e1", here=out_shopping)
+    await executor.run_tool(ctx, "book_ride", {"destination": "Clinic", "as_said": "clinic"})
+    assert "pickup%5Blatitude%5D=18.510000" in captured["url"] and "Current+location" in captured["url"]
+    assert captured["args"]["from"] == "current_location" and captured["lines"][-1] == "From where you are now"
+
+    ctx.here = None  # no location (or not shared): from home, as before
+    await executor.run_tool(ctx, "book_ride", {"destination": "Clinic", "as_said": "clinic"})
+    assert "pickup%5Blatitude%5D=18.520000" in captured["url"] and captured["lines"][-1] == "From home"
+
+
+def test_only_a_fresh_accurate_location_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.routers import chat
+    s = chat.Session.__new__(chat.Session)
+    s._here = None
+    assert s.here() is None
+    clock = [1000.0]
+    monkeypatch.setattr(chat.time, "monotonic", lambda: clock[0])
+    s.set_here(chat.Here(lat=18.51, lng=73.85, accuracy=30))
+    assert s.here() == (18.51, 73.85)
+    clock[0] += chat.HERE_FRESH_S + 1
+    assert s.here() is None                                      # 10 minutes old: use home
+    s.set_here(chat.Here(lat=18.51, lng=73.85, accuracy=1500))   # a rough fix (wifi/cell): use home
+    assert s.here() is None
