@@ -47,6 +47,8 @@ class Persona:
     health_notes: str
     # Illustrations (components/Face.tsx) for elder, caretaker, son, neighbour, doctor — chosen to fit each person.
     faces: tuple[str, str, str, str, str] = ("rose", "emma", "tom", "david", "lewis")
+    # Saved places for rides (name as the elder says it, street, lat, lng) — the 🚕 tile offers them.
+    places: tuple[tuple[str, str, float, float], ...] = ()
 
 
 PERSONAS: dict[SandboxLanguage, Persona] = {
@@ -57,6 +59,9 @@ PERSONAS: dict[SandboxLanguage, Persona] = {
         (("Amlodipine", "5mg", ("08:00", "20:00"), True), ("Metformin", "500mg", ("08:00",), True)),
         ("porridge and tea", "dal, rice and a banana", "idli and coffee", "toast and an egg"),
         "David", "Tom", "Dr Lewis", "Mild high blood pressure and type 2 diabetes. Knees ache on cold mornings.",
+        places=(("Clinic", "Ruby Hall Clinic, 40 Sassoon Road", 18.5308, 73.8770),
+                ("Emma's home", "Lane 5, Koregaon Park", 18.5362, 73.8940),
+                ("Market", "Mahatma Phule Mandai", 18.5122, 73.8560)),
     ),
     "hi-IN": Persona(
         "Kamla", "Priya", "daughter", "Asia/Kolkata", "New Delhi",
@@ -66,6 +71,9 @@ PERSONAS: dict[SandboxLanguage, Persona] = {
         ("poha and chai", "dal, roti and sabzi", "khichdi", "paratha and curd"),
         "Mr Gupta", "Rahul", "Dr Mehta", "High blood pressure and type 2 diabetes. Walks slowly on stairs.",
         ("rose", "mia", "tom", "david", "lewis"),
+        places=(("क्लिनिक", "Moolchand Hospital, Lala Lajpat Rai Marg", 28.5649, 77.2342),
+                ("मंदिर", "ISKCON Temple, East of Kailash", 28.5562, 77.2440),
+                ("प्रिया का घर", "C-21 Defence Colony", 28.5741, 77.2320)),
     ),
     "hi-Latn": Persona(  # Hinglish: same household as Hindi; the helper writes Roman-script Hindi
         "Kamla", "Priya", "daughter", "Asia/Kolkata", "New Delhi",
@@ -75,6 +83,9 @@ PERSONAS: dict[SandboxLanguage, Persona] = {
         ("poha and chai", "dal, roti and sabzi", "khichdi", "paratha and curd"),
         "Mr Gupta", "Rahul", "Dr Mehta", "High blood pressure and type 2 diabetes. Walks slowly on stairs.",
         ("rose", "mia", "tom", "david", "lewis"),
+        places=(("Clinic", "Moolchand Hospital, Lala Lajpat Rai Marg", 28.5649, 77.2342),
+                ("Mandir", "ISKCON Temple, East of Kailash", 28.5562, 77.2440),
+                ("Priya ka ghar", "C-21 Defence Colony", 28.5741, 77.2320)),
     ),
     "th-TH": Persona(
         "Somsri", "Nok", "daughter", "Asia/Bangkok", "Bangkok",
@@ -84,6 +95,9 @@ PERSONAS: dict[SandboxLanguage, Persona] = {
         ("rice porridge (jok)", "khao man gai", "noodle soup", "rice with stir-fried vegetables"),
         "Khun Somchai", "Lek", "Dr Suda", "High blood pressure and type 2 diabetes. Sometimes forgets the evening pill.",
         ("rose", "mia", "tom", "david", "emma"),  # Dr Suda is a woman
+        places=(("คลินิก", "Bumrungrad Hospital, Sukhumvit Soi 3", 13.7466, 100.5527),
+                ("วัด", "Wat Thatthong, Sukhumvit 61", 13.7225, 100.5868),
+                ("บ้านนก", "Phahonyothin Soi 7, Ari", 13.7797, 100.5446)),
     ),
 }
 
@@ -175,6 +189,9 @@ def create_sandbox(language: SandboxLanguage, now: dt.datetime | None = None) ->
             "uid": elder_id, "name": el.name, "phone": _fake_phone(), "language": language,
             "sharingTier": "daily_summary", "caretakerIds": [ct_uid], "baselineWindowDays": 7,
             "timezone": p.timezone, "city": p.city, "address": p.address,
+            "places": [{"id": f"pl_demo{i}", "name": name, "address": {
+                "line1": line1, "line2": "", "landmark": "", "city": p.city, "postcode": "",
+                "lat": lat, "lng": lng, "precision": "address"}} for i, (name, line1, lat, lng) in enumerate(p.places)],
             "sleep": {"bedtime": "22:00", "wakeTime": "06:30"},
             "meals": {"breakfast": "08:00", "lunch": "13:00", "dinner": "19:30"},
             "medicationSchedule": [m.model_dump() for m in meds], "healthNotes": p.health_notes,
